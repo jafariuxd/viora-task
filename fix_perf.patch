@@ -1,0 +1,31 @@
+--- app/src/main/java/com/example/ui/screens/HomeScreen.kt
++++ app/src/main/java/com/example/ui/screens/HomeScreen.kt
+@@ -172,7 +172,7 @@
+                                 // 6. Subsequent Tasks Feed (sorted by closest deadline)
+                                 val subsequentTasks = tasks.filter { it.id != nextTask?.id }
+                                 itemsIndexed(
+                                     items = subsequentTasks,
+-                                    key = { index, task -> "${task.id}_$index" }
++                                    key = { _, task -> task.id }
+                                 ) { index, task ->
+                                     TaskListItemCard(
+@@ -433,2 +433,1 @@
+             .fillMaxWidth()
+-            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+             .testTag("weather_time_card"),
+@@ -533,2 +532,1 @@
+             .clickable { onClick() }
+-            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+             .testTag("upcoming_event_card"),
+@@ -629,2 +627,1 @@
+             .clickable { onCardClick() }
+-            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+             .testTag("next_task_card"),
+@@ -789,2 +786,1 @@
+             .clickable { onClick() }
+-            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+             .testTag("unplanned_tasks_card"),
+@@ -860,2 +856,1 @@
+             .clickable { onCardClick() }
+-            .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+             .testTag("task_list_item_card_${task.id}"),

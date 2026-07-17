@@ -1,0 +1,6 @@
+{
+  "name": "Viora Task",
+  "description": "A deadline-driven task management application for freelancers and small agencies.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

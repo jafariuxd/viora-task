@@ -1,0 +1,297 @@
+package com.example.viewmodel
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.model.CalendarEvent
+import com.example.model.Task
+import com.example.model.TaskStatus
+import com.example.model.WeatherInfo
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
+class VioraTaskViewModel : ViewModel() {
+
+    // Current navigation tab: "home", "new_task", "teams"
+    private val _currentTab = MutableStateFlow("home")
+    val currentTab: StateFlow<String> = _currentTab.asStateFlow()
+
+    // Real-time time display (e.g., "22:13")
+    private val _currentTime = MutableStateFlow("")
+    val currentTime: StateFlow<String> = _currentTime.asStateFlow()
+
+    // Real-time date display (e.g., "Wednesday, 29 Aug")
+    private val _currentDate = MutableStateFlow("")
+    val currentDate: StateFlow<String> = _currentDate.asStateFlow()
+
+    // Teams state
+    private val _teams = MutableStateFlow(listOf("All Lists", "Chamedoon", "GymShow", "Iranicard", "Rahbord", "Viora Design"))
+    val teams: StateFlow<List<String>> = _teams.asStateFlow()
+
+    private val _selectedTeam = MutableStateFlow("All Lists")
+    val selectedTeam: StateFlow<String> = _selectedTeam.asStateFlow()
+
+    private val _viewingList = MutableStateFlow<String?>(null)
+    val viewingList: StateFlow<String?> = _viewingList.asStateFlow()
+
+    fun viewListDetail(list: String?) {
+        _viewingList.value = list
+    }
+
+    private val _viewingTeam = MutableStateFlow<String?>(null)
+    val viewingTeam: StateFlow<String?> = _viewingTeam.asStateFlow()
+
+    fun viewTeamDetail(team: String?) {
+        _viewingTeam.value = team
+    }
+
+    fun selectTeam(team: String) {
+        _selectedTeam.value = team
+    }
+
+    fun addTeam(team: String) {
+        if (team.isNotBlank() && !_teams.value.contains(team)) {
+            _teams.value = _teams.value + team
+            _selectedTeam.value = team
+        }
+    }
+
+    // Weather Info state
+    private val _weatherInfo = MutableStateFlow(
+        WeatherInfo(
+            location = "Tehran",
+            temperature = "9°",
+            condition = "Sunny",
+            uvIndex = "Low",
+            dateText = "Wednesday, 29 Aug",
+            lastRefreshText = "Last refresh: Just now"
+        )
+    )
+    val weatherInfo: StateFlow<WeatherInfo> = _weatherInfo.asStateFlow()
+
+    // Upcoming event state
+    private val _upcomingEvent = MutableStateFlow(
+        CalendarEvent(
+            day = "23",
+            month = "Aug",
+            title = "Meeting with Mamad",
+            time = "At 08:15 am"
+        )
+    )
+    val upcomingEvent: StateFlow<CalendarEvent> = _upcomingEvent.asStateFlow()
+
+    // Task list data state
+    private val _tasks = MutableStateFlow<List<Task>>(emptyList())
+    val tasks: StateFlow<List<Task>> = _tasks.asStateFlow()
+
+    // Lazy load state
+    private val _isLoadingMore = MutableStateFlow(false)
+    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+
+    private val _hasMoreToLoad = MutableStateFlow(true)
+    val hasMoreToLoad: StateFlow<Boolean> = _hasMoreToLoad.asStateFlow()
+
+    // Total number of tasks shown (increases by 5)
+    private val _visibleCount = MutableStateFlow(5)
+    val visibleCount: StateFlow<Int> = _visibleCount.asStateFlow()
+
+    // Next urgent task (sorted first by closest deadline and not done)
+    private val _nextTask = MutableStateFlow<Task?>(null)
+    val nextTask: StateFlow<Task?> = _nextTask.asStateFlow()
+
+    // Count of unplanned tasks
+    private val _unplannedCount = MutableStateFlow(14)
+    val unplannedCount: StateFlow<Int> = _unplannedCount.asStateFlow()
+
+    // Full task pool of mock data (40 tasks)
+    private val fullTaskPool = mutableListOf<Task>()
+
+    init {
+        generateMockTasks()
+        updateNextTask()
+        startClock()
+        startWeatherTimer()
+    }
+
+    private fun generateMockTasks() {
+        // 1. Set up the specific prominent next task matching the screenshot exactly
+        val nextTaskItem = Task(
+            id = "task_0",
+            title = "Design wireframe and final user flow in homepage of Haj Behzad",
+            client = "Iranicard",
+            daysLeft = 2,
+            status = TaskStatus.IN_PROGRESS,
+            assigneePhotos = listOf("mohammad", "sara", "sara", "mohammad") // represent multiple avatars +4
+        )
+        fullTaskPool.add(nextTaskItem)
+
+        // 2. Subsequent tasks
+        val clients = listOf("Charity", "Acapela", "Snapp", "Tap30", "Digikala", "Alibaba", "Cafebazaar")
+        val taskTitles = listOf(
+            "Implement secure authentication with Firebase",
+            "Develop local offline storage with Room Database",
+            "Optimize image loading using Coil library",
+            "Design dashboard analytics page with Vico Charts",
+            "Perform user testing and write comprehensive reports",
+            "Refactor state management in navigation views",
+            "Integrate third-party payment gateway",
+            "Create adaptive custom icons for high-density screens",
+            "Review pull requests and resolve conflicts",
+            "Write Roborazzi screenshot tests for critical user flows",
+            "Set up CI/CD pipeline with GitHub Actions",
+            "Optimize app startup time and size properties",
+            "Draft database migration schema for v2.0",
+            "Conduct SEO optimization of public web pages",
+            "Design vector assets for onboarding screens",
+            "Implement dark theme for modern look",
+            "Configure edge-to-edge system navigation bars",
+            "Update external library versions in TOML catalog",
+            "Prepare final presentation deck for the client",
+            "Set up push notification channels using FCM",
+            "Create interactive breathing animation loops",
+            "Write API integration layer with Retrofit",
+            "Draft privacy policy and terms of service",
+            "Configure app release signing keys and keys setup",
+            "Establish user segmentation for email alerts",
+            "Design high-fidelity user profiles view",
+            "Debug live crash reports from Google Play Console",
+            "Prepare app store listing copy and promo images",
+            "Conduct design QA review for web applications"
+        )
+
+        for (i in 1..35) {
+            val title = taskTitles[i % taskTitles.size]
+            val client = clients[i % clients.size]
+            // sorted by closest deadline
+            val daysLeft = i / 2 + 3 // 3, 3, 4, 4, 5, 5, etc.
+            val status = when (i % 4) {
+                0 -> TaskStatus.TODO
+                1 -> TaskStatus.IN_PROGRESS
+                2 -> TaskStatus.IN_REVIEW
+                else -> TaskStatus.DONE
+            }
+            val assignees = when (i % 3) {
+                0 -> listOf("mohammad")
+                1 -> listOf("sara", "mohammad")
+                else -> listOf("sara")
+            }
+            fullTaskPool.add(
+                Task(
+                    id = "task_$i",
+                    title = title,
+                    client = client,
+                    daysLeft = daysLeft,
+                    status = status,
+                    assigneePhotos = assignees
+                )
+            )
+        }
+
+        // Sort all pool by daysLeft (ascending)
+        fullTaskPool.sortBy { it.daysLeft }
+
+        // Load the initial 10 tasks to display
+        loadCurrentTasks()
+    }
+
+    private fun loadCurrentTasks() {
+        val count = _visibleCount.value
+        val subList = fullTaskPool.take(count)
+        _tasks.value = subList
+        _hasMoreToLoad.value = count < fullTaskPool.size
+    }
+
+    fun loadMoreTasks() {
+        if (_isLoadingMore.value || !_hasMoreToLoad.value) return
+
+        viewModelScope.launch {
+            _isLoadingMore.value = true
+            // Simulate 1.5 second loading delay
+            delay(1500)
+            val newCount = _visibleCount.value + 5
+            _visibleCount.value = newCount
+            loadCurrentTasks()
+            _isLoadingMore.value = false
+        }
+    }
+
+    private fun updateNextTask() {
+        // Find the next task that is In Progress or To Do, with the lowest daysLeft
+        _nextTask.value = fullTaskPool.firstOrNull { it.status != TaskStatus.DONE }
+    }
+
+    fun updateTaskStatus(taskId: String, newStatus: TaskStatus) {
+        // Update in pool
+        val index = fullTaskPool.indexOfFirst { it.id == taskId }
+        if (index != -1) {
+            val updatedTask = fullTaskPool[index].copy(status = newStatus)
+            fullTaskPool[index] = updatedTask
+            // Update the display list
+            loadCurrentTasks()
+            updateNextTask()
+        }
+    }
+
+    fun addTask(task: Task) {
+        fullTaskPool.add(task)
+        fullTaskPool.sortBy { it.daysLeft }
+        loadCurrentTasks()
+        updateNextTask()
+    }
+
+    fun upsertTask(task: Task) {
+        val index = fullTaskPool.indexOfFirst { it.id == task.id }
+        if (index != -1) {
+            fullTaskPool[index] = task
+        } else {
+            fullTaskPool.add(task)
+        }
+        fullTaskPool.sortBy { it.daysLeft }
+        loadCurrentTasks()
+        updateNextTask()
+    }
+
+    fun deleteTask(taskId: String) {
+        val index = fullTaskPool.indexOfFirst { it.id == taskId }
+        if (index != -1) {
+            fullTaskPool.removeAt(index)
+            loadCurrentTasks()
+            updateNextTask()
+        }
+    }
+
+    fun selectTab(tab: String) {
+        _currentTab.value = tab
+    }
+
+    private fun startClock() {
+        viewModelScope.launch {
+            val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+            val dateFormat = SimpleDateFormat("EEEE, d MMM", Locale.getDefault())
+            while (true) {
+                val calendar = Calendar.getInstance()
+                _currentTime.value = timeFormat.format(calendar.time)
+                _currentDate.value = dateFormat.format(calendar.time)
+                delay(1000) // Update every second
+            }
+        }
+    }
+
+    private fun startWeatherTimer() {
+        viewModelScope.launch {
+            var minutes = 0
+            while (true) {
+                _weatherInfo.value = _weatherInfo.value.copy(
+                    lastRefreshText = if (minutes == 0) "Last refresh: Just now" else "Last refresh: $minutes min ago"
+                )
+                delay(60000) // update refresh statement every minute
+                minutes++
+            }
+        }
+    }
+}

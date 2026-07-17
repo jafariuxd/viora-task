@@ -1,0 +1,155 @@
+--- app/src/main/java/com/example/ui/screens/auth/DeadlineScreen.kt
++++ app/src/main/java/com/example/ui/screens/auth/DeadlineScreen.kt
+@@ -19,6 +19,7 @@
+ import com.example.ui.components.VioraAuthText
+ import com.example.ui.theme.VioraNeonLime
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import com.example.ui.components.DefaultDeadlineSelector
+ import com.example.viewmodel.AuthViewModel
+ 
+ @Composable
+@@ -79,114 +80,15 @@
+             Spacer(modifier = Modifier.height(32.dp))
+             
+-            // Segmented Control
+-            Row(
+-                modifier = Modifier
+-                    .fillMaxWidth()
+-                    .height(56.dp)
+-                    .border(1.dp, VioraAuthBorder, RoundedCornerShape(28.dp))
+-                    .clip(RoundedCornerShape(28.dp))
+-            ) {
+-                options.forEachIndexed { index, option ->
+-                    val isSelected = option == selectedOption
+-                    Box(
+-                        modifier = Modifier
+-                            .weight(1f)
+-                            .fillMaxHeight()
+-                            .background(if (isSelected) VioraNeonLime else Color.Transparent)
+-                            .clickable { viewModel.updateDefaultDeadline(option) }
+-                            .then(
+-                                if (index != options.size - 1 && !isSelected && selectedOption != options[index+1])
+-                                     Modifier.border(0.5.dp, VioraAuthBorder) // Right border if not last and not next to selected
+-                                else Modifier
+-                            ),
+-                        contentAlignment = Alignment.Center
+-                    ) {
+-                        Row(verticalAlignment = Alignment.CenterVertically) {
+-                            if (isSelected) {
+-                                Icon(
+-                                    imageVector = Icons.Default.Check,
+-                                    contentDescription = null,
+-                                    modifier = Modifier.size(16.dp),
+-                                    tint = VioraAuthText
+-                                )
+-                                Spacer(modifier = Modifier.width(4.dp))
+-                            }
+-                            Text(
+-                                text = option,
+-                                color = if (isSelected) VioraAuthText else VioraAuthGrayText,
+-                                fontSize = 14.sp,
+-                                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
+-                            )
+-                        }
+-                    }
+-                }
+-            }
+-
+-            if (selectedOption == "Custom") {
+-                Spacer(modifier = Modifier.height(48.dp))
+-                Text(
+-                    text = "Your unscheduled tasks will due in",
+-                    fontSize = 16.sp,
+-                    color = VioraAuthText
+-                )
+-                
+-                Spacer(modifier = Modifier.height(32.dp))
+-                
+-                val customDays by viewModel.customDays.collectAsStateWithLifecycle()
+-                val listState = rememberLazyListState(initialFirstVisibleItemIndex = if (customDays > 0) customDays - 1 else 2)
+-                
+-                val centerIndex by remember {
+-                    derivedStateOf {
+-                        val layoutInfo = listState.layoutInfo
+-                        val viewportCenter = layoutInfo.viewportStartOffset + layoutInfo.viewportSize.height / 2
+-                        val centerItem = layoutInfo.visibleItemsInfo.minByOrNull { kotlin.math.abs(it.offset + it.size / 2 - viewportCenter) }
+-                        centerItem?.index ?: 0
+-                    }
+-                }
+-                
+-                LaunchedEffect(centerIndex) {
+-                    viewModel.updateCustomDays(centerIndex + 1)
+-                }
+-
+-                Row(
+-                    modifier = Modifier.fillMaxWidth(),
+-                    horizontalArrangement = Arrangement.Center,
+-                    verticalAlignment = Alignment.CenterVertically
+-                ) {
+-                    val itemHeight = 64.dp
+-                    Box(modifier = Modifier.height(itemHeight * 5)) {
+-                        LazyColumn(
+-                            state = listState,
+-                            flingBehavior = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState),
+-                            contentPadding = PaddingValues(vertical = itemHeight * 2),
+-                            modifier = Modifier.width(60.dp)
+-                        ) {
+-                            items(14) { index ->
+-                                val day = index + 1
+-                                val distance = kotlin.math.abs(centerIndex - index)
+-                                
+-                                val fontSize = when(distance) {
+-                                    0 -> 48.sp
+-                                    1 -> 32.sp
+-                                    else -> 24.sp
+-                                }
+-                                val color = when(distance) {
+-                                    0 -> VioraAuthText
+-                                    1 -> VioraAuthGrayText
+-                                    else -> VioraAuthBorder
+-                                }
+-                                val fontWeight = if (distance == 0) FontWeight.Bold else FontWeight.Normal
+-
+-                                Box(
+-                                    modifier = Modifier
+-                                        .fillMaxWidth()
+-                                        .height(itemHeight),
+-                                    contentAlignment = Alignment.Center
+-                                ) {
+-                                    Text(
+-                                        text = day.toString(),
+-                                        fontSize = fontSize,
+-                                        color = color,
+-                                        fontWeight = fontWeight
+-                                    )
+-                                }
+-                            }
+-                        }
+-                    }
+-                    
+-                    Spacer(modifier = Modifier.width(16.dp))
+-                    
+-                    Text(
+-                        text = "Days",
+-                        fontSize = 24.sp,
+-                        color = VioraAuthText,
+-                        fontWeight = FontWeight.Medium
+-                    )
+-                }
+-            }
++            val customDays by viewModel.customDays.collectAsStateWithLifecycle()
++            DefaultDeadlineSelector(
++                selectedOption = selectedOption,
++                onOptionSelected = { viewModel.updateDefaultDeadline(it) },
++                customDays = customDays,
++                onCustomDaysChanged = { viewModel.updateCustomDays(it) },
++                textColor = VioraAuthText,
++                unselectedTextColor = VioraAuthGrayText,
++                borderColor = VioraAuthBorder,
++                selectedBackgroundColor = VioraNeonLime,
++                selectedItemTextColor = VioraAuthText,
++                modifier = Modifier.fillMaxWidth()
++            )
+         }
+     }
+ }

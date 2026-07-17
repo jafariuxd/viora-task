@@ -1,0 +1,33 @@
+--- app/src/main/java/com/example/ui/navigation/NavGraph.kt
++++ app/src/main/java/com/example/ui/navigation/NavGraph.kt
+@@ -10,6 +10,12 @@
+ import androidx.compose.ui.Modifier
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
+ import androidx.lifecycle.viewmodel.compose.viewModel
++import androidx.navigation.compose.currentBackStackEntryAsState
++import androidx.compose.runtime.SideEffect
++import androidx.compose.ui.platform.LocalView
++import androidx.core.view.WindowCompat
++import android.app.Activity
+ import androidx.navigation.NavHostController
+ import androidx.navigation.compose.NavHost
+ import androidx.navigation.compose.composable
+@@ -38,6 +44,19 @@
+ ) {
+     val isVerticalTransition = { route: String? ->
+         route == "welcome" || route == "user_profile" || route == "edit_profile" || route == "search" || route == "agenda"
+     }
++
++    val currentBackStackEntry by navController.currentBackStackEntryAsState()
++    val currentRoute = currentBackStackEntry?.destination?.route
++    val isWhiteBackground = currentRoute in listOf("welcome", "otp", "profile", "deadline")
++
++    val view = LocalView.current
++    if (!view.isInEditMode) {
++        SideEffect {
++            val window = (view.context as Activity).window
++            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = isWhiteBackground
++        }
++    }
+ 
+     NavHost(
