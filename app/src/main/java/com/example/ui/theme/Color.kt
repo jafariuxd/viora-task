@@ -22,3 +22,43 @@ val VioraLightBlueBadge = Color(0xFFE5F1FF)
 val VioraLightBlueText = Color(0xFF386B99)
 val VioraDarkText = Color(0xFF1E2022)
 val VioraNeonLime = Color(0xFFB4FF00)
+
+// Status & Palette Color Pairs (Container + Content)
+data class VioraColorPair(
+    val container: Color,
+    val content: Color
+)
+
+object VioraColors {
+    // Red (To-Do / Urgent)
+    val LightRed = VioraColorPair(
+        container = Color(0xFFFFD8D8),
+        content = Color(0xFF8A0000)
+    )
+    
+    // Blue (In Progress)
+    val Blue = VioraColorPair(
+        container = Color(0xFFD6E3FF),
+        content = Color(0xFF001B3E)
+    )
+    
+    // Green (Done)
+    val Green = VioraColorPair(
+        container = Color(0xFFD4EFA5),
+        content = Color(0xFF234B00)
+    )
+    
+    // Yellow (Unplanned / Warning)
+    val Yellow = VioraColorPair(
+        container = Color(0xFFFBE38A),
+        content = Color(0xFF5C4300)
+    )
+
+    fun forStatus(status: com.example.model.TaskStatus): VioraColorPair {
+        return when (status) {
+            com.example.model.TaskStatus.TODO -> LightRed
+            com.example.model.TaskStatus.IN_PROGRESS -> Blue
+            com.example.model.TaskStatus.DONE -> Green
+        }
+    }
+}

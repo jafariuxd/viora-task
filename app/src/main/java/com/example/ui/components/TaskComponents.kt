@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,10 +49,10 @@ fun VioraRadioButton(
 @Composable
 fun TeamListItem(
     teamName: String,
-    isSelected: Boolean,
     onRowClick: () -> Unit,
-    onRadioClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isSelected: Boolean = false,
+    onRadioClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = modifier
@@ -68,9 +70,12 @@ fun TeamListItem(
             fontSize = 32.sp,
             letterSpacing = (-0.5).sp
         )
-        Box(modifier = Modifier.clickable { onRadioClick() }.padding(8.dp)) {
-            VioraRadioButton(selected = isSelected)
-        }
+        Icon(
+            imageVector = Icons.Rounded.ChevronRight,
+            contentDescription = "View Team",
+            tint = Color(0xFFAAAAAA),
+            modifier = Modifier.size(28.dp)
+        )
     }
 }
 
@@ -79,14 +84,15 @@ fun StatusButton(
     text: String,
     isSelected: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Box(
         modifier = modifier
             .height(72.dp)
             .clip(RoundedCornerShape(24.dp))
             .background(if (isSelected) VioraNeonLime else Color.White)
-            .clickable { onClick() },
+            .clickable(enabled = enabled) { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Text(

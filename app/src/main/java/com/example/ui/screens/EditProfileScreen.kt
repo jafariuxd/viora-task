@@ -1,5 +1,13 @@
 package com.example.ui.screens
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,85 +33,176 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import coil.compose.AsyncImage
 import com.example.ui.components.DefaultDeadlineSelector
 import com.example.ui.theme.SFProDisplayFontFamily
 import com.example.ui.theme.VioraBackground
 import com.example.ui.theme.VioraNeonLime
 import com.example.R
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditProfileScreen(
+    focusDeadline: Boolean = false,
     onBack: () -> Unit,
     onSave: () -> Unit
 ) {
-    var fullName by remember { mutableStateOf("Mohammad Mahdi Jafari") }
-    var username by remember { mutableStateOf("jafariuxd") }
-    var email by remember { mutableStateOf("jafariuxd@gmail.com") }
-    var defaultDeadline by remember { mutableStateOf("Weekly") }
-    var customDays by remember { mutableStateOf(3) }
+    var predictiveBackProgress by remember { mutableFloatStateOf(0f) }
+    val animatedBackProgress by animateFloatAsState(
+        targetValue = predictiveBackProgress,
+        animationSpec = spring(
+            dampingRatio = 0.72f,
+            stiffness = 700f
+        ),
+        label = "editProfileSpringBack"
+    )
+
+    PredictiveBackHandler { progressFlow ->
+        try {
+            progressFlow.collect { backEvent ->
+                predictiveBackProgress = backEvent.progress * 0.75f
+            }
+            onBack()
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            predictiveBackProgress = 0f
+        }
+    }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val authPrefs = remember { context.getSharedPreferences("viora_auth_prefs", android.content.Context.MODE_PRIVATE) }
+    val isRegistered = remember { authPrefs.getBoolean("is_registered", false) }
+
+    val initialName = if (isRegistered) authPrefs.getString("user_name", "User") ?: "User" else ""
+    val initialUsername = if (isRegistered) authPrefs.getString("user_username", "username") ?: "username" else "username"
+    val initialEmail = if (isRegistered) authPrefs.getString("user_email", "user@example.com") ?: "user@example.com" else "user@example.com"
+    val initialDeadline = if (isRegistered) authPrefs.getString("user_default_deadline", "Weekly") ?: "Weekly" else "Weekly"
+    val initialCustomDays = if (isRegistered) authPrefs.getInt("user_custom_days", 14) else 14
+    val initialAvatarUri = if (isRegistered) authPrefs.getString("user_avatar_uri", null) else null
+
+    var fullName by remember { mutableStateOf(initialName) }
+    var username by remember { mutableStateOf(initialUsername) }
+    var email by remember { mutableStateOf(initialEmail) }
+    var defaultDeadline by remember { mutableStateOf(initialDeadline) }
+    var customDays by remember { mutableStateOf(initialCustomDays) }
+    var avatarUri by remember { mutableStateOf(initialAvatarUri) }
+
+    val scrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
+    var deadlineSectionY by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(focusDeadline) {
+        if (focusDeadline) {
+            kotlinx.coroutines.delay(300)
+            scrollState.animateScrollTo(deadlineSectionY.toInt())
+        }
+    }
+
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            avatarUri = com.example.util.ImageUtil.copyUriToInternalStorage(context, uri.toString())
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer {
+                val progress = animatedBackProgress
+                if (progress > 0f) {
+                    val scale = 1f - (progress * 0.12f)
+                    scaleX = scale
+                    scaleY = scale
+                    translationY = progress * 70.dp.toPx()
+                    alpha = 1f - (progress * 0.35f)
+                    shape = RoundedCornerShape((progress * 32).dp)
+                    clip = true
+                }
+            }
             .background(VioraBackground)
             .navigationBarsPadding()
             .imePadding()
             .padding(top = 48.dp) // Status bar padding
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
     ) {
         // Top Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier
-                    .size(48.dp)
-                    .border(1.dp, Color(0xFF4A4A4A), CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
+        com.example.ui.components.VioraTopAppBar(
+            navigationIcon = {
+                com.example.ui.components.VioraHeaderIconButton(
+                    icon = Icons.Default.Close,
                     contentDescription = "Close",
-                    tint = Color.White
+                    onClick = onBack
                 )
+            },
+            actions = {
+                Button(
+                    onClick = {
+                        val savedAvatar = com.example.util.ImageUtil.toSmallBase64(context, avatarUri)
+
+                        authPrefs.edit()
+                            .putBoolean("is_registered", true)
+                            .putString("user_name", fullName)
+                            .putString("user_username", username)
+                            .putString("user_email", email)
+                            .putString("user_avatar_uri", savedAvatar ?: avatarUri)
+                            .putString("user_default_deadline", defaultDeadline)
+                            .putInt("user_custom_days", customDays)
+                            .apply()
+
+                        coroutineScope.launch {
+                            try {
+                                val req = com.example.model.viora.UpdateUserDto(
+                                    fullName = fullName.ifEmpty { null },
+                                    avatar = savedAvatar ?: avatarUri,
+                                    days = customDays
+                                )
+                                com.example.network.viora.VioraNetworkModule.api.updateCurrentUser(req)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+
+                        onSave()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = VioraNeonLime, contentColor = Color.Black),
+                    shape = RoundedCornerShape(24.dp),
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        text = "Save",
+                        fontSize = 16.sp,
+                        fontFamily = SFProDisplayFontFamily,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
-            
-            Button(
-                onClick = onSave,
-                colors = ButtonDefaults.buttonColors(containerColor = VioraNeonLime, contentColor = Color.Black),
-                shape = RoundedCornerShape(24.dp),
-                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
-            ) {
-                Text(
-                    text = "Save",
-                    fontSize = 16.sp,
-                    fontFamily = SFProDisplayFontFamily,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
+        )
         
         Spacer(modifier = Modifier.height(24.dp))
         
-        // Avatar
+        // Avatar Preview
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
                 .size(120.dp)
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.img_profile_mohammad_1783672402325),
-                contentDescription = "Profile Picture",
-                contentScale = ContentScale.Crop,
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .size(120.dp)
                     .clip(CircleShape)
-            )
+                    .clickable { launcher.launch("image/*") }
+            ) {
+                com.example.ui.components.UserAvatar(
+                    userId = username,
+                    avatarUri = avatarUri,
+                    size = 120.dp
+                )
+            }
             
             Box(
                 modifier = Modifier
@@ -111,7 +210,7 @@ fun EditProfileScreen(
                     .size(36.dp)
                     .clip(CircleShape)
                     .background(VioraNeonLime)
-                    .clickable { /* Change Photo */ },
+                    .clickable { launcher.launch("image/*") },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -123,7 +222,7 @@ fun EditProfileScreen(
             }
         }
         
-        Spacer(modifier = Modifier.height(40.dp))
+        Spacer(modifier = Modifier.height(32.dp))
         
         // Text Fields
         Column(
@@ -160,6 +259,7 @@ fun EditProfileScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp)
+                .onGloballyPositioned { deadlineSectionY = it.positionInParent().y }
         ) {
             Text(
                 text = "Default Deadline",
@@ -193,33 +293,6 @@ fun EditProfileScreen(
                 fontFamily = SFProDisplayFontFamily,
                 lineHeight = 20.sp
             )
-            
-            if (defaultDeadline == "Custom") {
-                Spacer(modifier = Modifier.height(32.dp))
-                // Number Picker Mock
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Text("1", color = Color(0xFF333333), fontSize = 32.sp, fontWeight = FontWeight.Bold, fontFamily = SFProDisplayFontFamily)
-                        Text("2", color = Color(0xFF666666), fontSize = 32.sp, fontWeight = FontWeight.Bold, fontFamily = SFProDisplayFontFamily)
-                        Text("3", color = Color.White, fontSize = 48.sp, fontWeight = FontWeight.Bold, fontFamily = SFProDisplayFontFamily)
-                        Text("4", color = Color(0xFF666666), fontSize = 32.sp, fontWeight = FontWeight.Bold, fontFamily = SFProDisplayFontFamily)
-                        Text("5", color = Color(0xFF333333), fontSize = 32.sp, fontWeight = FontWeight.Bold, fontFamily = SFProDisplayFontFamily)
-                    }
-                    
-                    Spacer(modifier = Modifier.width(24.dp))
-                    
-                    Text("Days", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold, fontFamily = SFProDisplayFontFamily)
-                }
-                
-                Spacer(modifier = Modifier.height(48.dp))
-            }
         }
     }
 }
@@ -240,8 +313,8 @@ fun ProfileTextField(
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = VioraNeonLime,
             unfocusedBorderColor = if (isFocusedMock) VioraNeonLime else Color.White,
-            focusedLabelColor = VioraNeonLime,
-            unfocusedLabelColor = Color.White,
+            focusedLabelColor = Color.White.copy(alpha = 0.5f),
+            unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
             focusedTextColor = Color.White,
             unfocusedTextColor = Color.White,
             cursorColor = VioraNeonLime,

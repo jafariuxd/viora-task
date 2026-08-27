@@ -1,5 +1,6 @@
 package com.example.ui.screens.auth
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -34,8 +35,12 @@ fun OtpScreen(
     onBack: () -> Unit,
     onNext: () -> Unit
 ) {
+    BackHandler {
+        onBack()
+    }
+
     val otpValue by viewModel.otp.collectAsStateWithLifecycle()
-    val otpLength = 5
+    val otpLength = 6
 
     Column(
         modifier = Modifier
@@ -145,9 +150,11 @@ fun OtpScreen(
                 .fillMaxWidth()
                 .padding(24.dp)
         ) {
+            val isOtpCorrect = otpValue.length == 6
             AuthPrimaryButton(
                 text = "Next",
-                onClick = onNext
+                onClick = onNext,
+                enabled = isOtpCorrect
             )
         }
     }

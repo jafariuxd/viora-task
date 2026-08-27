@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="280dp"
+    android:height="140dp"
+    android:viewportWidth="280"
+    android:viewportHeight="140">
+    <!-- Dark Card Background (#1C1C1E) -->
+    <path
+        android:fillColor="#1C1C1E"
+        android:pathData="M 24,10 L 256,10 A 18,18 0 0 1 274,28 L 274,112 A 18,18 0 0 1 256,130 L 24,130 A 18,18 0 0 1 6,112 L 6,28 A 18,18 0 0 1 24,10 Z" />
+    
+    <!-- Quote Icon in Lime (#B4FF00) -->
+    <path
+        android:fillColor="#B4FF00"
+        android:pathData="M 24,30 L 36,30 C 42,30 46,34 46,40 L 46,48 L 34,48 L 34,60 L 22,60 L 22,40 C 22,34 24,30 24,30 Z M 48,30 L 60,30 C 66,30 70,34 70,40 L 70,48 L 58,48 L 58,60 L 46,60 L 46,40 C 46,34 48,30 48,30 Z" />
+
+    <!-- Sample Quote Lines (White text bars / vector paths representing quote text) -->
+    <!-- Line 1: "Focus on being productive" -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 24,68 L 220,68 A 4,4 0 0 1 224,72 L 224,74 A 4,4 0 0 1 220,78 L 24,78 A 4,4 0 0 1 20,74 L 20,72 A 4,4 0 0 1 24,68 Z" />
+    <!-- Line 2: "instead of busy." -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 24,84 L 160,84 A 4,4 0 0 1 164,88 L 164,90 A 4,4 0 0 1 160,94 L 24,94 A 4,4 0 0 1 20,90 L 20,88 A 4,4 0 0 1 24,84 Z" />
+
+    <!-- Author Name "- Tim Ferriss" in Gray (#A0A0A0) -->
+    <path android:fillColor="#A0A0A0" android:pathData="M 24,106 L 100,106 A 3,3 0 0 1 103,109 L 103,110 A 3,3 0 0 1 100,113 L 24,113 A 3,3 0 0 1 21,110 L 21,109 A 3,3 0 0 1 24,106 Z" />
+</vector>

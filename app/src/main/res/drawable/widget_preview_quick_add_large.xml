@@ -1,0 +1,34 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="100dp"
+    android:viewportWidth="240"
+    android:viewportHeight="100">
+    <!-- Card Background (#1C1C1E) -->
+    <path
+        android:fillColor="#1C1C1E"
+        android:pathData="M 20,10 L 220,10 A 16,16 0 0 1 236,26 L 236,74 A 16,16 0 0 1 220,90 L 20,90 A 16,16 0 0 1 4,74 L 4,26 A 16,16 0 0 1 20,10 Z" />
+    <!-- Text Placeholder / Bar "New Task" -->
+    <!-- Letter N -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 32,42 L 36,42 L 44,54 L 44,42 L 48,42 L 48,58 L 44,58 L 36,46 L 36,58 L 32,58 Z" />
+    <!-- Letter e -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 52,47 C 52,43.5 54.5,41.5 58,41.5 C 61.5,41.5 64,43.5 64,47 C 64,47.5 64,48 64,48 L 55,48 C 55,50 56,51 58,51 C 59.5,51 60.5,50.5 61,49.5 L 63.5,50.5 C 62.5,52.5 60.5,53.5 58,53.5 C 54.5,53.5 52,51.5 52,47 Z M 55,46 L 61,46 C 61,44.5 60,43.5 58,43.5 C 56,43.5 55,44.5 55,46 Z" />
+    <!-- Letter w -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 67,42 L 71,42 L 73.5,53 L 76,42 L 79,42 L 81.5,53 L 84,42 L 88,42 L 83.5,58 L 80,58 L 77.5,47 L 75,58 L 71.5,58 Z" />
+    <!-- Letter T -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 98,42 L 112,42 L 112,46 L 107,46 L 107,58 L 103,58 L 103,46 L 98,46 Z" />
+    <!-- Letter a -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 115,50 C 115,48 116.5,47 119.5,47 L 123,47 L 123,46 C 123,44.5 122,43.5 120,43.5 C 118.5,43.5 117.5,44 117,45 L 115,43.5 C 116,42 118,41.5 120,41.5 C 124,41.5 126,43.5 126,46 L 126,53.5 L 123,53.5 L 123,52 C 122,53 120.5,53.5 119,53.5 C 116.5,53.5 115,52 115,50 Z M 123,49 L 120,49 C 118.5,49 118,49.5 118,50.5 C 118,51.5 118.5,52 119.5,52 C 121.5,52 123,51 123,49.5 Z" />
+    <!-- Letter s -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 129,51.5 L 131.5,50.5 C 132,51.5 132.5,52 134,52 C 135,52 135.5,51.5 135.5,51 C 135.5,50.2 134.5,50 133,49.5 C 131,49 129.5,48 129.5,46 C 129.5,43.5 131.5,41.5 134,41.5 C 136.5,41.5 138,42.5 139,44.5 L 136.5,45.5 C 136,44.5 135,44 134,44 C 133,44 132.5,44.5 132.5,45 C 132.5,45.8 133.5,46 135,46.5 C 137,47 138.5,48 138.5,50 C 138.5,52.5 136.5,53.5 134,53.5 C 131,53.5 129.5,52.5 129,51.5 Z" />
+    <!-- Letter k -->
+    <path android:fillColor="#FFFFFF" android:pathData="M 142,37 L 145,37 L 145,46.5 L 149.5,41.5 L 153.5,41.5 L 148.5,47 L 154,53.5 L 150,53.5 L 145,48 L 145,53.5 L 142,53.5 Z" />
+    
+    <!-- Circular Lime Add Button (#B4FF00) -->
+    <path
+        android:fillColor="#B4FF00"
+        android:pathData="M 200,22 A 28,28 0 1 1 199.9,22 Z" />
+    <!-- Black Plus Sign inside Lime circle -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M 197,38 L 203,38 L 203,47 L 212,47 L 212,53 L 203,53 L 203,62 L 197,62 L 197,53 L 188,53 L 188,47 L 197,47 Z" />
+</vector>

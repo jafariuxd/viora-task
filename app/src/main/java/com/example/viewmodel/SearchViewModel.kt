@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.update
 class SearchViewModel : ViewModel() {
 
     private val allUsers = listOf(
-        User("1", "Mohammad", "@mehran", R.drawable.img_profile_mohammad_1783672402325, 5),
+        User("1", "Mohammad", "@user", R.drawable.img_profile_mohammad_1783672402325, 5),
         User("2", "Mohammadreza", "@mohre", R.drawable.img_profile_mohammad_1783672402325, 4), // Placeholder
         User("3", "Mohammad Moein", "@moein", R.drawable.img_profile_mohammad_1783672402325, 3), // Placeholder
         User("4", "Sara", "@sara", R.drawable.img_avatar_sara_1783672418392, 5)

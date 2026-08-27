@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    <!-- Circle background (Lime) -->
+    <path
+        android:fillColor="#B4FF00"
+        android:pathData="M 60,10 A 50,50 0 1 1 59.9,10 Z" />
+    <!-- Microphone Icon (Black) -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M 60,35 C 53.37,35 48,40.37 48,47 L 48,63 C 48,69.63 53.37,75 60,75 C 66.63,75 72,69.63 72,63 L 72,47 C 72,40.37 66.63,35 60,35 Z M 78,63 C 78,72.94 69.94,81 60,81 C 50.06,81 42,72.94 42,63 L 36,63 C 36,74.41 44.13,83.93 55,85.64 L 55,93 L 65,93 L 65,85.64 C 75.87,83.93 84,74.41 84,63 L 78,63 Z" />
+</vector>

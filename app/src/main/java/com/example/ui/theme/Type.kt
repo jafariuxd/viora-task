@@ -8,20 +8,22 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.unit.sp
 import com.example.R
 
+import androidx.compose.ui.text.style.TextDirection
+
 val SFProDisplayFontFamily = FontFamily(
     Font(resId = R.font.sf_pro_display_light, weight = FontWeight.Light),
     Font(resId = R.font.sf_pro_display_regular, weight = FontWeight.Normal),
     Font(resId = R.font.sf_pro_display_medium, weight = FontWeight.Medium),
     Font(resId = R.font.sf_pro_display_semibold, weight = FontWeight.SemiBold),
     Font(resId = R.font.sf_pro_display_bold, weight = FontWeight.Bold),
-    Font(resId = R.font.sf_pro_display_heavy, weight = FontWeight.Black)
+    
+
 )
 
 private val defaultTypography = Typography()
 
 // Set of Material typography styles to start with
-val Typography =
-  Typography(
+private val baseTypography = Typography(
     displayLarge = defaultTypography.displayLarge.copy(fontFamily = SFProDisplayFontFamily),
     displayMedium = defaultTypography.displayMedium.copy(fontFamily = SFProDisplayFontFamily),
     displaySmall = defaultTypography.displaySmall.copy(fontFamily = SFProDisplayFontFamily),
@@ -36,7 +38,6 @@ val Typography =
         fontFamily = SFProDisplayFontFamily,
         fontWeight = FontWeight.Normal,
         fontSize = 32.sp,
-        lineHeight = 32.sp,
         letterSpacing = 0.sp
     ),
     headlineSmall = defaultTypography.headlineSmall.copy(fontFamily = SFProDisplayFontFamily),
@@ -73,5 +74,23 @@ val Typography =
         letterSpacing = 0.15.sp
     ),
     labelSmall = defaultTypography.labelSmall.copy(fontFamily = SFProDisplayFontFamily)
-  )
+)
+
+val Typography = Typography(
+    displayLarge = baseTypography.displayLarge.copy(textDirection = TextDirection.Content),
+    displayMedium = baseTypography.displayMedium.copy(textDirection = TextDirection.Content),
+    displaySmall = baseTypography.displaySmall.copy(textDirection = TextDirection.Content),
+    headlineLarge = baseTypography.headlineLarge.copy(textDirection = TextDirection.Content),
+    headlineMedium = baseTypography.headlineMedium.copy(textDirection = TextDirection.Content),
+    headlineSmall = baseTypography.headlineSmall.copy(textDirection = TextDirection.Content),
+    titleLarge = baseTypography.titleLarge.copy(textDirection = TextDirection.Content),
+    titleMedium = baseTypography.titleMedium.copy(textDirection = TextDirection.Content),
+    titleSmall = baseTypography.titleSmall.copy(textDirection = TextDirection.Content),
+    bodyLarge = baseTypography.bodyLarge.copy(textDirection = TextDirection.Content),
+    bodyMedium = baseTypography.bodyMedium.copy(textDirection = TextDirection.Content),
+    bodySmall = baseTypography.bodySmall.copy(textDirection = TextDirection.Content),
+    labelLarge = baseTypography.labelLarge.copy(textDirection = TextDirection.Content),
+    labelMedium = baseTypography.labelMedium.copy(textDirection = TextDirection.Content),
+    labelSmall = baseTypography.labelSmall.copy(textDirection = TextDirection.Content)
+)
 

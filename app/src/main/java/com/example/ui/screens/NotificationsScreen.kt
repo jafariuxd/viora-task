@@ -1,5 +1,11 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,11 +36,35 @@ import com.example.model.Notification
 import com.example.model.NotificationType
 import com.example.viewmodel.NotificationsViewModel
 
+import androidx.compose.foundation.lazy.itemsIndexed
+import com.example.ui.utils.animateEnter
+
 @Composable
 fun NotificationsScreen(
     viewModel: NotificationsViewModel,
     onBack: () -> Unit
 ) {
+    var predictiveBackProgress by remember { mutableFloatStateOf(0f) }
+    val animatedBackProgress by animateFloatAsState(
+        targetValue = predictiveBackProgress,
+        animationSpec = spring(
+            dampingRatio = 0.72f,
+            stiffness = 700f
+        ),
+        label = "notificationsSpringBack"
+    )
+
+    PredictiveBackHandler { progressFlow ->
+        try {
+            progressFlow.collect { backEvent ->
+                predictiveBackProgress = backEvent.progress * 0.75f
+            }
+            onBack()
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            predictiveBackProgress = 0f
+        }
+    }
+
     val notifications by viewModel.notifications.collectAsStateWithLifecycle()
 
     val groupedNotifications = notifications.groupBy { it.timeGroup }
@@ -42,6 +72,18 @@ fun NotificationsScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer {
+                val progress = animatedBackProgress
+                if (progress > 0f) {
+                    val scale = 1f - (progress * 0.12f)
+                    scaleX = scale
+                    scaleY = scale
+                    translationY = progress * 70.dp.toPx()
+                    alpha = 1f - (progress * 0.35f)
+                    shape = RoundedCornerShape((progress * 32).dp)
+                    clip = true
+                }
+            }
             .background(Color.Black)
             .statusBarsPadding()
             .navigationBarsPadding()
@@ -95,6 +137,7 @@ fun NotificationsScreen(
             modifier = Modifier.padding(horizontal = 20.dp)
         )
 
+        var globalIndex = 0
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 7.dp, end = 7.dp, top = 8.dp, bottom = 16.dp),
@@ -102,21 +145,27 @@ fun NotificationsScreen(
         ) {
             groupedNotifications.forEach { (timeGroup, notifs) ->
                 item {
+                    val idx = globalIndex++
                     Text(
                         text = timeGroup,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color.White.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(
-                            start = 13.dp,
-                            bottom = 12.dp,
-                            top = if (timeGroup == "Today") 8.dp else 16.dp
-                        )
+                        modifier = Modifier
+                            .animateEnter(delayMillis = idx * 40)
+                            .padding(
+                                start = 13.dp,
+                                bottom = 12.dp,
+                                top = if (timeGroup == "Today") 8.dp else 16.dp
+                            )
                     )
                 }
                 
-                items(notifs) { notification ->
-                    NotificationCard(notification)
+                itemsIndexed(notifs) { _, notification ->
+                    val idx = globalIndex++
+                    Box(modifier = Modifier.animateEnter(delayMillis = idx * 40)) {
+                        NotificationCard(notification)
+                    }
                 }
             }
         }

@@ -1,0 +1,20 @@
+--- app/src/main/java/com/example/viewmodel/VioraTaskViewModel.kt
++++ app/src/main/java/com/example/viewmodel/VioraTaskViewModel.kt
+@@ -157,8 +157,4 @@
+         if (teamName == "All Lists") return
+-        _teams.value = _teams.value.filter { it != teamName }
+-        if (_selectedTeam.value == teamName) {
+-            _selectedTeam.value = "All Lists"
+-        }
+         val teamId = teamName.lowercase().replace(" ", "_")
+         mockTeams.remove(teamId)
+@@ -172,6 +168,10 @@
+         }
+ 
++        updateActiveAndArchivedStates()
++        if (_selectedTeam.value == teamName) {
++            _selectedTeam.value = "All Lists"
++        }
+         loadCurrentTasks()
+         updateNextTask()
+         updateUnplannedCount()

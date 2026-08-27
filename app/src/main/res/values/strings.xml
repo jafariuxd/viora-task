@@ -1,3 +1,10 @@
 <resources>
     <string name="app_name">Viora Task</string>
+    <string name="app_widget_quick_add_small_description">Opens a super fast dedicated popup to add a task and closes immediately.</string>
+    <string name="app_widget_quick_add_large_description">A larger widget that opens a super fast dedicated popup to add a task.</string>
+    <string name="app_widget_quick_add_small_app_description">Opens the main app directly to add a task (App Mode).</string>
+    <string name="app_widget_quick_add_large_app_description">A larger widget that opens the main app directly to add a task (App Mode).</string>
+    <string name="app_widget_daily_brief_description">Displays your daily brief and upcoming tasks at a glance.</string>
+    <string name="app_widget_quote_description">Inspirational daily quote to keep you focused and motivated.</string>
+    <string name="app_widget_voice_task_description">Quickly record and create tasks using your voice.</string>
 </resources>

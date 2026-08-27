@@ -1,0 +1,26 @@
+
+    fun deleteTeam(teamName: String) {
+        if (teamName == "All Lists") return
+        _teams.value = _teams.value.filter { it != teamName }
+        if (_selectedTeam.value == teamName) {
+            _selectedTeam.value = "All Lists"
+        }
+        val teamId = teamName.lowercase().replace(" ", "_")
+        mockTeams.remove(teamId)
+
+        // Cascading Delete Rule: Delete all lists and tasks of this team
+        val listsToRemove = _lists.value.filter { it.teamId == teamId }
+        val listIdsToRemove = listsToRemove.map { it.id }.toSet()
+        _lists.value = _lists.value.filter { it.teamId != teamId }
+
+        listsToRemove.forEach { mockLists.remove(it.id) }
+
+        fullTaskPool.removeAll { task ->
+            task.teamId == teamId || (task.listId != null && listIdsToRemove.contains(task.listId))
+        }
+
+        loadCurrentTasks()
+        updateNextTask()
+        updateUnplannedCount()
+        saveState()
+        showMessage("Workspace deleted")

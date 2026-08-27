@@ -14,5 +14,6 @@ data class UserProfile(
     val username: String,
     val profileImageRes: Int? = null,
     val joinDate: String,
-    val stats: UserProfileStats
+    val stats: UserProfileStats,
+    val profileImageUri: String? = null
 )

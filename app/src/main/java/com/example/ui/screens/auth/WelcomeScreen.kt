@@ -1,5 +1,6 @@
 package com.example.ui.screens.auth
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -22,9 +23,28 @@ import com.example.viewmodel.AuthViewModel
 fun WelcomeScreen(
     viewModel: AuthViewModel,
     onClose: () -> Unit,
-    onNext: () -> Unit
+    onNavigateToOtp: () -> Unit,
+    onNavigateToLogin: () -> Unit
 ) {
+    BackHandler { onClose() }
     val email by viewModel.email.collectAsStateWithLifecycle()
+    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val isSuccess by viewModel.isSuccess.collectAsStateWithLifecycle()
+
+    LaunchedEffect(isSuccess) {
+        if (isSuccess) {
+            viewModel.resetSuccess()
+            onNavigateToOtp()
+        }
+    }
+
+    LaunchedEffect(errorMessage) {
+        if (errorMessage?.contains("User already exists") == true) {
+            viewModel.clearError()
+            onNavigateToLogin()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -45,7 +65,7 @@ fun WelcomeScreen(
                 .padding(horizontal = 24.dp)
         ) {
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Text(
                 text = "Welcome \uD83D\uDC4B to", // 👋
                 fontSize = 32.sp,
@@ -58,21 +78,21 @@ fun WelcomeScreen(
                 fontWeight = FontWeight.Bold,
                 color = VioraAuthText
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Text(
-                text = "By deleting this task, it will be permanently unavailable. If you think you may need it later.",
+                text = "Enter your email to get started. If you have an account, you will be asked to log in. Otherwise, we'll send you an OTP to register.",
                 fontSize = 16.sp,
                 color = VioraAuthGrayText,
                 lineHeight = 24.sp
             )
-            
+
             Spacer(modifier = Modifier.height(32.dp))
-            
+
             OutlinedTextField(
                 value = email,
-                onValueChange = { viewModel.updateEmail(it) },
+                onValueChange = { viewModel.updateEmail(it); viewModel.clearError() },
                 label = { Text("Your email") },
                 modifier = Modifier.fillMaxWidth(),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -85,6 +105,15 @@ fun WelcomeScreen(
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
                 singleLine = true
             )
+
+            if (errorMessage != null && !errorMessage!!.contains("User already exists")) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = errorMessage!!,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 14.sp
+                )
+            }
         }
 
         Box(
@@ -92,9 +121,11 @@ fun WelcomeScreen(
                 .fillMaxWidth()
                 .padding(24.dp)
         ) {
+            val isEmailValid = email.isNotBlank() && email.contains("@")
             AuthPrimaryButton(
-                text = "Next",
-                onClick = onNext
+                text = if (isLoading) "Loading..." else "Next",
+                onClick = { viewModel.submitEmail() },
+                enabled = isEmailValid && !isLoading
             )
         }
     }

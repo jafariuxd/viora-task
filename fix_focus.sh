@@ -1,0 +1,1 @@
+sed -i 's/\.pointerInput(Unit) {/.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { focusManager.clearFocus() }/g' app/src/main/java/com/example/ui/screens/TaskDetailScreen.kt

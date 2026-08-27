@@ -1,0 +1,38 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+    <!-- Dark Card Background (#1C1C1E) -->
+    <path
+        android:fillColor="#1C1C1E"
+        android:pathData="M 24,12 L 176,12 A 20,20 0 0 1 196,32 L 196,168 A 20,20 0 0 1 176,188 L 24,188 A 20,20 0 0 1 4,168 L 4,32 A 20,20 0 0 1 24,12 Z" />
+
+    <!-- Top Header: Viora Lime Pill Badge "Daily Brief" -->
+    <path
+        android:fillColor="#B4FF00"
+        android:pathData="M 20,28 L 100,28 A 10,10 0 0 1 110,38 L 110,40 A 10,10 0 0 1 100,50 L 20,50 A 10,10 0 0 1 10,40 L 10,38 A 10,10 0 0 1 20,28 Z" />
+    <!-- Black text indicator in pill -->
+    <path android:fillColor="#000000" android:pathData="M 22,36 L 88,36 A 3,3 0 0 1 91,39 L 91,39 A 3,3 0 0 1 88,42 L 22,42 A 3,3 0 0 1 19,39 L 19,39 A 3,3 0 0 1 22,36 Z" />
+
+    <!-- Counter / Subtitle Bar: "3 Tasks Remaining" -->
+    <path android:fillColor="#888888" android:pathData="M 20,60 L 110,60 A 3,3 0 0 1 113,63 L 113,64 A 3,3 0 0 1 110,67 L 20,67 A 3,3 0 0 1 17,64 L 17,63 A 3,3 0 0 1 20,60 Z" />
+
+    <!-- Task Item 1: Checked Circle + Task Bar -->
+    <path android:fillColor="#B4FF00" android:pathData="M 26,86 A 8,8 0 1 1 25.9,86 Z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M 42,82 L 170,82 A 4,4 0 0 1 174,86 L 174,87 A 4,4 0 0 1 170,91 L 42,91 A 4,4 0 0 1 38,87 L 38,86 A 4,4 0 0 1 42,82 Z" />
+
+    <!-- Task Item 2: Unchecked Ring + Task Bar -->
+    <path android:fillColor="#555555" android:pathData="M 26,116 A 8,8 0 1 1 25.9,116 Z" />
+    <path android:fillColor="#1C1C1E" android:pathData="M 26,118 A 5,5 0 1 1 25.9,118 Z" />
+    <path android:fillColor="#D0D0D0" android:pathData="M 42,112 L 150,112 A 4,4 0 0 1 154,116 L 154,117 A 4,4 0 0 1 150,121 L 42,121 A 4,4 0 0 1 38,117 L 38,116 A 4,4 0 0 1 42,112 Z" />
+
+    <!-- Task Item 3: Unchecked Ring + Task Bar -->
+    <path android:fillColor="#555555" android:pathData="M 26,146 A 8,8 0 1 1 25.9,146 Z" />
+    <path android:fillColor="#1C1C1E" android:pathData="M 26,148 A 5,5 0 1 1 25.9,148 Z" />
+    <path android:fillColor="#D0D0D0" android:pathData="M 42,142 L 130,142 A 4,4 0 0 1 134,146 L 134,147 A 4,4 0 0 1 130,151 L 42,151 A 4,4 0 0 1 38,147 L 38,146 A 4,4 0 0 1 42,142 Z" />
+
+    <!-- Bottom Progress Line -->
+    <path android:fillColor="#B4FF00" android:pathData="M 20,172 L 80,172 A 2,2 0 0 1 82,174 L 82,174 A 2,2 0 0 1 80,176 L 20,176 A 2,2 0 0 1 18,174 L 18,174 A 2,2 0 0 1 20,172 Z" />
+    <path android:fillColor="#333333" android:pathData="M 82,172 L 180,172 A 2,2 0 0 1 182,174 L 182,174 A 2,2 0 0 1 180,176 L 82,176 A 2,2 0 0 1 80,174 L 80,174 A 2,2 0 0 1 82,172 Z" />
+</vector>

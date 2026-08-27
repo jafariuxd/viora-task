@@ -1,7 +1,12 @@
 package com.example.ui.screens.auth
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,9 +20,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.ui.components.AuthTopBar
 import com.example.ui.components.AuthTopRightButton
 import com.example.ui.components.VioraAuthBackground
@@ -36,9 +43,29 @@ fun ProfileScreen(
     onBack: () -> Unit,
     onNext: () -> Unit
 ) {
+    BackHandler {
+        onBack()
+    }
+
     val fullName by viewModel.fullName.collectAsStateWithLifecycle()
     val username by viewModel.username.collectAsStateWithLifecycle()
     val password by viewModel.password.collectAsStateWithLifecycle()
+    val avatarUri by viewModel.avatarUri.collectAsStateWithLifecycle()
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val smallBase64 = com.example.util.ImageUtil.toSmallBase64(context, uri.toString())
+            val localUri = com.example.util.ImageUtil.copyUriToInternalStorage(context, uri.toString())
+            viewModel.updateAvatarUri(smallBase64 ?: localUri)
+        } else {
+            viewModel.updateAvatarUri(null)
+        }
+    }
+
+    val isFormValid = fullName.isNotBlank() && username.isNotBlank() && password.isNotBlank()
 
     Column(
         modifier = Modifier
@@ -51,7 +78,11 @@ fun ProfileScreen(
             onBackOrClose = onBack,
             isClose = false,
             rightAction = {
-                AuthTopRightButton(text = "Next", onClick = onNext)
+                AuthTopRightButton(
+                    text = "Next",
+                    onClick = onNext,
+                    enabled = isFormValid
+                )
             }
         )
 
@@ -73,7 +104,7 @@ fun ProfileScreen(
             Spacer(modifier = Modifier.height(16.dp))
             
             Text(
-                text = "Shape your workspace identity. Complete your profile to continue.",
+                text = "Shape your profile identity. Complete your profile to continue.",
                 fontSize = 16.sp,
                 color = VioraAuthGrayText,
                 lineHeight = 24.sp
@@ -140,40 +171,28 @@ fun ProfileScreen(
             Spacer(modifier = Modifier.height(24.dp))
             
             Text(
-                text = "Choose avatar:",
+                text = "Profile photo (optional):",
                 fontSize = 16.sp,
                 color = VioraAuthGrayText
             )
             
             Spacer(modifier = Modifier.height(16.dp))
             
-            // Dashed circle for avatar
             Box(
-                modifier = Modifier
-                    .fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
                     modifier = Modifier
                         .size(100.dp)
                         .clip(CircleShape)
-                        .background(Color.Transparent),
+                        .clickable { launcher.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
-                    androidx.compose.foundation.Canvas(modifier = Modifier.matchParentSize()) {
-                        drawCircle(
-                            color = VioraAuthBorder,
-                            style = Stroke(
-                                width = 2.dp.toPx(),
-                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
-                            )
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add Avatar",
-                        tint = VioraNeonLime,
-                        modifier = Modifier.size(32.dp)
+                    com.example.ui.components.UserAvatar(
+                        userId = username.ifBlank { fullName.ifBlank { "User" } },
+                        avatarUri = avatarUri,
+                        size = 100.dp
                     )
                 }
             }

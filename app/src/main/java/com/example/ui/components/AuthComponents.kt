@@ -65,13 +65,15 @@ fun AuthTopBar(
 @Composable
 fun AuthTopRightButton(
     text: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    enabled: Boolean = true
 ) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         colors = ButtonDefaults.buttonColors(
-            containerColor = VioraNeonLime,
-            contentColor = VioraAuthText
+            containerColor = if (enabled) VioraNeonLime else Color(0xFFF0F0F0),
+            contentColor = if (enabled) VioraAuthText else Color(0xFF9E9E9E)
         ),
         shape = RoundedCornerShape(24.dp),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
@@ -97,17 +99,21 @@ fun AuthPrimaryButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     trailingIcon: @Composable (() -> Unit)? = null
 ) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier
             .fillMaxWidth()
             .height(56.dp),
         shape = RoundedCornerShape(28.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = VioraNeonLime,
-            contentColor = VioraAuthText
+            containerColor = if (enabled) VioraNeonLime else Color(0xFFF0F0F0),
+            contentColor = if (enabled) VioraAuthText else Color(0xFF9E9E9E),
+            disabledContainerColor = Color(0xFFF0F0F0),
+            disabledContentColor = Color(0xFF9E9E9E)
         ),
         contentPadding = PaddingValues(horizontal = 24.dp)
     ) {
