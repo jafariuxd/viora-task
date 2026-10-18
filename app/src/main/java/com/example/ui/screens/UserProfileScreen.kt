@@ -32,6 +32,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -42,11 +45,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import com.example.ui.theme.VioraNeonLime
 import com.example.ui.theme.SFProDisplayFontFamily
 import com.example.viewmodel.UserProfileViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UserProfileScreen(
     viewModel: UserProfileViewModel,
@@ -106,36 +111,59 @@ fun UserProfileScreen(
         }
     }
 
+    val isUploadingAvatar by viewModel.isUploadingAvatar.collectAsStateWithLifecycle()
+    val uploadError by viewModel.uploadError.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            viewModel.updateProfileAvatar(uri.toString())
+            val localUri = com.example.util.ImageUtil.copyUriToInternalStorage(context, uri.toString())
+            viewModel.updateProfileAvatar(localUri ?: uri.toString())
             onAvatarChanged()
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                val progress = animatedBackProgress
-                if (progress > 0f) {
-                    val scale = 1f - (progress * 0.12f)
-                    scaleX = scale
-                    scaleY = scale
-                    translationY = progress * 70.dp.toPx()
-                    alpha = 1f - (progress * 0.35f)
-                    shape = RoundedCornerShape((progress * 32).dp)
-                    clip = true
-                }
-            }
-            .background(Color.Black)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val pullState = rememberPullToRefreshState()
+
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = { viewModel.refreshProfile(taskViewModel) },
+        state = pullState,
+        modifier = Modifier.fillMaxSize(),
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pullState,
+                isRefreshing = isRefreshing,
+                modifier = Modifier.align(Alignment.TopCenter),
+                containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E),
+                color = VioraNeonLime
+            )
+        }
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val progress = animatedBackProgress
+                    if (progress > 0f) {
+                        val scale = 1f - (progress * 0.12f)
+                        scaleX = scale
+                        scaleY = scale
+                        translationY = progress * 70.dp.toPx()
+                        alpha = 1f - (progress * 0.35f)
+                        shape = RoundedCornerShape((progress * 32).dp)
+                        clip = true
+                    }
+                }
+                .background(androidx.compose.ui.graphics.Color.Black)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         // Top Bar
         com.example.ui.components.VioraTopAppBar(
             navigationIcon = {
@@ -284,29 +312,55 @@ fun UserProfileScreen(
             modifier = Modifier
                 .padding(top = 16.dp)
         ) {
-                Box(
-                    modifier = Modifier
-                        .size(125.dp)
-                        .clip(CircleShape)
-                        .clickable { launcher.launch("image/*") }
-                ) {
-                    com.example.ui.components.UserAvatar(
-                        userId = profile?.username ?: profile?.name ?: "User",
-                        avatarUri = profile?.profileImageUri,
-                        size = 125.dp
-                    )
+            val pickPhotoAction = {
+                launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(125.dp)
+                    .clip(CircleShape)
+                    .clickable { pickPhotoAction() }
+            ) {
+                com.example.ui.components.UserAvatar(
+                    userId = profile?.username ?: profile?.name ?: "User",
+                    avatarUri = profile?.profileImageUri,
+                    size = 125.dp
+                )
+
+                if (isUploadingAvatar) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.55f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = VioraNeonLime,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
                 }
-                
-                // Camera Badge
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(VioraNeonLime)
-                        .clickable { launcher.launch("image/*") },
-                    contentAlignment = Alignment.Center
-                ) {
+            }
+            
+            // Camera Badge
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(VioraNeonLime)
+                    .clickable { pickPhotoAction() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (isUploadingAvatar) {
+                    CircularProgressIndicator(
+                        color = Color.Black,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.dp)
+                    )
+                } else {
                     Icon(
                         imageVector = Icons.Default.CameraAlt,
                         contentDescription = "Change Photo",
@@ -315,6 +369,7 @@ fun UserProfileScreen(
                     )
                 }
             }
+        }
 
         profile?.let { userProfile ->
             Spacer(modifier = Modifier.height(24.dp))
@@ -543,6 +598,7 @@ fun UserProfileScreen(
                 onNavigateToScanner()
             }
         )
+    }
     }
 }
 

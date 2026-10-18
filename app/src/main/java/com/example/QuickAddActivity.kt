@@ -337,7 +337,7 @@ class QuickAddActivity : ComponentActivity() {
             title = title,
             client = "Viora design",
             userId = "user1",
-            folder = "Unplanned Tasks",
+            folder = "My Tasks",
             daysLeft = 7,
             status = TaskStatus.TODO
         )

@@ -65,10 +65,6 @@ fun AppNavGraph(
         }
     }
 
-    val currentBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = currentBackStackEntry?.destination?.route
-    val isWhiteBackground = currentRoute in listOf("welcome", "otp", "profile", "deadline")
-
     val context = androidx.compose.ui.platform.LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("viora_auth_prefs", android.content.Context.MODE_PRIVATE) }
     val isRegistered = remember { sharedPrefs.getBoolean("is_registered", false) }
@@ -77,8 +73,23 @@ fun AppNavGraph(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = isWhiteBackground
+            val activity = (view.context as? Activity) 
+                ?: (view.context as? android.content.ContextWrapper)?.let { 
+                    var ctx = it
+                    while (ctx is android.content.ContextWrapper && ctx !is Activity) {
+                        ctx = ctx.baseContext as? android.content.ContextWrapper ?: break
+                    }
+                    ctx as? Activity
+                }
+            activity?.window?.let { window ->
+                try {
+                    val controller = WindowCompat.getInsetsController(window, view)
+                    controller.isAppearanceLightStatusBars = false
+                    controller.isAppearanceLightNavigationBars = false
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 
@@ -177,7 +188,7 @@ fun AppNavGraph(
                 onLoginSuccess = {
                     viewModel.loadState()
                     userProfileViewModel.loadProfile()
-                    navController.navigate("home") {
+                    navController.navigate("home?promptCalendar=true") {
                         popUpTo("welcome") { inclusive = true }
                     }
                 }
@@ -208,21 +219,30 @@ fun AppNavGraph(
                 onNext = {
                     viewModel.loadState()
                     userProfileViewModel.loadProfile()
-                    navController.navigate("home") {
+                    navController.navigate("home?promptCalendar=true") {
                         popUpTo("welcome") { inclusive = true }
                     }
                 }
             )
         }
 
-        composable("home") {
+        composable(
+            route = "home?promptCalendar={promptCalendar}",
+            arguments = listOf(
+                navArgument("promptCalendar") {
+                    type = NavType.BoolType
+                    defaultValue = false
+                }
+            )
+        ) { backStackEntry ->
+            val promptCalendar = backStackEntry.arguments?.getBoolean("promptCalendar") ?: false
 
             HomeScreen(
                 onVioraPassClick = { },
                 onNavigateToScanner = { navController.navigate("scanner_camera") },
-
                 viewModel = viewModel,
                 agendaViewModel = agendaViewModel,
+                autoPromptCalendar = promptCalendar,
                 modifier = Modifier,
                 onNavigateToSearch = { navController.navigate("search") },
                 onNavigateToNotifications = { navController.navigate("notifications") },
@@ -230,7 +250,8 @@ fun AppNavGraph(
                 onNavigateToAgenda = { navController.navigate("agenda") },
                 onNavigateToList = { listName, teamName -> 
                     navController.navigate("list_detail/$listName/$teamName")
-                }
+                },
+                notificationsViewModel = notificationsViewModel
             )
         }
         
@@ -247,6 +268,8 @@ fun AppNavGraph(
                     viewModel.loadUserInfo() 
                 },
                 onLogout = {
+                    com.example.service.VioraFirebaseMessagingService.unregisterTokenFromServer(context)
+                    agendaViewModel.resetCalendarPromptState()
                     authViewModel.logout()
                     navController.navigate("welcome") {
                         popUpTo(0)
@@ -262,7 +285,7 @@ fun AppNavGraph(
                 onBack = { navController.popBackStack() },
                 onSave = { 
                     userProfileViewModel.loadProfile()
-                    viewModel.loadUserInfo()
+                    viewModel.loadUserInfo() 
                     navController.popBackStack() 
                 }
             )
@@ -271,7 +294,46 @@ fun AppNavGraph(
         composable("notifications") {
             NotificationsScreen(
                 viewModel = notificationsViewModel,
-                onBack = { navController.popBackStack() }
+                taskViewModel = viewModel,
+                onBack = { navController.popBackStack() },
+                onNotificationClick = { notification ->
+                    val actionUrl = notification.actionUrl
+                    if (!actionUrl.isNullOrBlank()) {
+                        val parsed = com.example.util.VioraDeepLinkHandler.parse(actionUrl)
+                        if (parsed !is com.example.util.VioraDeepLink.Unknown) {
+                            val enriched = if (parsed is com.example.util.VioraDeepLink.TeamInvite) {
+                                val teamName = notification.data?.get("teamName") ?: notification.title.removePrefix("Invited to ").trim()
+                                val inviteId = notification.data?.get("inviteId") ?: notification.id
+                                val inviter = notification.data?.get("invitedBy") ?: notification.data?.get("inviter")
+                                parsed.copy(
+                                    teamName = parsed.teamName ?: teamName,
+                                    inviteId = parsed.inviteId ?: inviteId,
+                                    inviterName = parsed.inviterName ?: inviter
+                                )
+                            } else parsed
+                            viewModel.handleDeepLink(enriched)
+                            navController.popBackStack()
+                            return@NotificationsScreen
+                        }
+                    }
+                    if (!notification.taskId.isNullOrBlank()) {
+                        viewModel.handleDeepLink(com.example.util.VioraDeepLink.TaskDetail(taskId = notification.taskId))
+                        navController.popBackStack()
+                    } else if (!notification.teamId.isNullOrBlank()) {
+                        val teamName = notification.data?.get("teamName") ?: notification.title.removePrefix("Invited to ").trim()
+                        val inviteId = notification.data?.get("inviteId") ?: notification.id
+                        val inviter = notification.data?.get("invitedBy") ?: notification.data?.get("inviter")
+                        viewModel.handleDeepLink(
+                            com.example.util.VioraDeepLink.TeamInvite(
+                                teamId = notification.teamId,
+                                teamName = teamName,
+                                inviteId = inviteId,
+                                inviterName = inviter
+                            )
+                        )
+                        navController.popBackStack()
+                    }
+                }
             )
         }
         

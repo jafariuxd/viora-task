@@ -90,31 +90,11 @@ fun VioraPassBottomSheet(
                     .background(Color(0xFFF2F2F7))
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                if (avatarUri != null) {
-                    AsyncImage(
-                        model = avatarUri,
-                        contentDescription = "Avatar",
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFB4FF00)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = userName.take(1).uppercase(),
-                            color = Color.Black,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = SFProDisplayFontFamily
-                        )
-                    }
-                }
+                com.example.ui.components.UserAvatar(
+                    userId = userName,
+                    avatarUri = avatarUri,
+                    size = 32.dp
+                )
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(

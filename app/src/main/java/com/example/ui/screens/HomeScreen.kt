@@ -81,14 +81,17 @@ fun HomeScreen(
     onNavigateToScanner: () -> Unit = {},
     viewModel: VioraTaskViewModel,
     agendaViewModel: com.example.viewmodel.AgendaViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
+    autoPromptCalendar: Boolean = false,
     modifier: Modifier = Modifier,
     onNavigateToSearch: () -> Unit = {},
     onNavigateToNotifications: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
     onNavigateToAgenda: () -> Unit = {},
-    onNavigateToList: (String, String) -> Unit = { _, _ -> }
+    onNavigateToList: (String, String) -> Unit = { _, _ -> },
+    notificationsViewModel: com.example.viewmodel.NotificationsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 ) {
     val context = LocalContext.current
+    val unreadNotificationsCount by notificationsViewModel.unreadCount.collectAsState()
     val currentTab by viewModel.currentTab.collectAsState()
     val currentTime by viewModel.currentTime.collectAsState()
     val currentDate by viewModel.currentDate.collectAsState()
@@ -104,6 +107,7 @@ fun HomeScreen(
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val hasMoreToLoad by viewModel.hasMoreToLoad.collectAsState()
     val completedCount by viewModel.completedCount.collectAsState()
+    val quickTasksCount by viewModel.quickTasksCount.collectAsState()
     val nextTask by viewModel.nextTask.collectAsState()
     val viewingTeam by viewModel.viewingTeam.collectAsState()
     val viewingList by viewModel.viewingList.collectAsState()
@@ -117,11 +121,7 @@ fun HomeScreen(
     val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            agendaViewModel.handleAuthorizationResult(context, result.data)
-        } else {
-            agendaViewModel.setError("Google Sign-In failed or was canceled. (Code: ${result.resultCode})")
-        }
+        agendaViewModel.handleAuthorizationResult(context, result.data, result.resultCode)
     }
 
     LaunchedEffect(authIntent) {
@@ -131,11 +131,82 @@ fun HomeScreen(
         }
     }
 
+    val agendaError by agendaViewModel.error.collectAsState()
+    LaunchedEffect(agendaError) {
+        if (!agendaError.isNullOrBlank()) {
+            android.widget.Toast.makeText(context, agendaError, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+
+
+    // Weather City Selector BottomSheet state
+    var showWeatherCitySheet by remember { mutableStateOf(false) }
+
     // Status picker state
     var selectedTaskForStatus by remember { mutableStateOf<Task?>(null) }
 
     // Task Detail screen state
     var activeDetailTask by remember { mutableStateOf<Task?>(null) }
+    var showSelectListForNewTaskSheet by remember { mutableStateOf(false) }
+    var showQuickTaskSheet by remember { mutableStateOf(false) }
+
+    val homeContext = LocalContext.current
+    LaunchedEffect(Unit) {
+        (homeContext as? com.example.MainActivity)?.checkNotificationPermission()
+        notificationsViewModel.refresh()
+    }
+
+    // Universal Link / Deep Link Team Invite dialog state
+    var pendingTeamInvite by remember { mutableStateOf<com.example.util.VioraDeepLink.TeamInvite?>(null) }
+
+    val deepLinkTarget by viewModel.deepLinkTarget.collectAsState()
+    LaunchedEffect(deepLinkTarget) {
+        when (val target = deepLinkTarget) {
+            is com.example.util.VioraDeepLink.TaskDetail -> {
+                val existingTask = viewModel.getTaskById(target.taskId)
+                if (existingTask != null) {
+                    activeDetailTask = existingTask
+                } else {
+                    // Task not found locally, create task from link metadata
+                    val taskTitle = target.title?.takeIf { it.isNotBlank() } ?: "Shared Task"
+                    val taskClient = target.client?.takeIf { it.isNotBlank() } ?: "Viora"
+                    val parsedStatus = when (target.status?.uppercase()) {
+                        "DONE", "COMPLETED" -> TaskStatus.DONE
+                        "IN_PROGRESS", "PROGRESS" -> TaskStatus.IN_PROGRESS
+                        else -> TaskStatus.TODO
+                    }
+                    val newTask = Task(
+                        id = target.taskId,
+                        title = taskTitle,
+                        client = taskClient,
+                        userId = "user1",
+                        daysLeft = target.daysLeft ?: 3,
+                        status = parsedStatus,
+                        description = target.description ?: ""
+                    )
+                    viewModel.addTask(newTask)
+                    activeDetailTask = newTask
+                }
+                viewModel.consumeDeepLink()
+            }
+            is com.example.util.VioraDeepLink.TeamInvite -> {
+                pendingTeamInvite = target
+                viewModel.loadTeamInvitations()
+                viewModel.consumeDeepLink()
+            }
+            is com.example.util.VioraDeepLink.ListDetail -> {
+                viewModel.viewListDetail(target.listName)
+                target.teamName?.let { viewModel.selectTeam(it) }
+                viewModel.consumeDeepLink()
+            }
+            is com.example.util.VioraDeepLink.TodayFocus -> {
+                viewModel.triggerDailyBrief()
+                viewModel.consumeDeepLink()
+            }
+            null, com.example.util.VioraDeepLink.Unknown -> {}
+        }
+    }
 
     val quickAddSignal by viewModel.quickAddSignal.collectAsState()
     LaunchedEffect(quickAddSignal) {
@@ -156,6 +227,9 @@ fun HomeScreen(
     // Focus mode state
     var focusedTask by remember { mutableStateOf<Task?>(null) }
     var focusedQuote by remember { mutableStateOf<DailyInsight?>(null) }
+    var showFocusTaskMenu by remember { mutableStateOf(false) }
+    var showFocusTaskDeleteConfirm by remember { mutableStateOf(false) }
+    var completedTaskForCelebration by remember { mutableStateOf<Task?>(null) }
 
     var predictiveBackProgress by remember { mutableFloatStateOf(0f) }
     val animatedBackProgress by animateFloatAsState(
@@ -167,13 +241,19 @@ fun HomeScreen(
         label = "homeSpringBack"
     )
 
-    val isAnyOverlayActive = activeDetailTask != null || selectedTaskForStatus != null || viewingList != null || viewingTeam != null || currentTab != "home" || focusedTask != null || focusedQuote != null
+    val isAnyOverlayActive = activeDetailTask != null || selectedTaskForStatus != null || viewingList != null || viewingTeam != null || currentTab != "home" || focusedTask != null || focusedQuote != null || showFocusTaskMenu || showFocusTaskDeleteConfirm || showSelectListForNewTaskSheet
     PredictiveBackHandler(enabled = isAnyOverlayActive) { progressFlow ->
         try {
             progressFlow.collect { backEvent ->
                 predictiveBackProgress = backEvent.progress * 0.75f
             }
-            if (focusedTask != null) {
+            if (showSelectListForNewTaskSheet) {
+                showSelectListForNewTaskSheet = false
+            } else if (showFocusTaskDeleteConfirm) {
+                showFocusTaskDeleteConfirm = false
+            } else if (showFocusTaskMenu) {
+                showFocusTaskMenu = false
+            } else if (focusedTask != null) {
                 focusedTask = null
             } else if (focusedQuote != null) {
                 focusedQuote = null
@@ -208,11 +288,7 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        (context as? android.app.Activity)?.let {
-            agendaViewModel.authorizeAndFetch(it, silent = true)
-        }
-    }
+    // Google Calendar agenda is fetched on-demand when the user views the Agenda tab or screen
 
     // Detect scroll end for Pagination
     val shouldLoadMore = remember(hasMoreToLoad) {
@@ -333,9 +409,10 @@ fun HomeScreen(
                                         userName = currentUserName,
                                         userHandle = currentUserHandle,
                                         avatarUri = currentUserAvatarUri,
+                                        unreadNotificationsCount = unreadNotificationsCount,
                                         onVioraPassClick = onVioraPassClick,
                                         modifier = Modifier.animateEnter(delayMillis = 0),
-                                        onSearchClick = onNavigateToSearch,
+                                                                                onSearchClick = onNavigateToSearch,
                                         onNotificationClick = onNavigateToNotifications,
                                         onProfileClick = onNavigateToProfile
                                     )
@@ -348,149 +425,187 @@ fun HomeScreen(
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     // 2. Weather & Time Card
-                                item {
-                                    if (tasks.isNotEmpty()) {
-                                    Box(modifier = Modifier.animateEnter(delayMillis = 50)) {
-                                        WeatherTimeCard(
-                                            weatherInfo = weatherInfo.copy(
-                                                dateText = if (currentDate.isNotEmpty()) currentDate else weatherInfo.dateText
-                                            ),
-                                            timeString = if (currentTime.isNotEmpty()) currentTime else "22:13",
-                                            isLoading = isDashboardLoading
-                                        )
-                                    }
-                                }
-
-                                }
-
-                                // 3. Upcoming Event Card (Green)
-                                item {
-                                    if (tasks.isNotEmpty()) {
-                                        Box(modifier = Modifier.animateEnter(delayMillis = 100)) {
-                                            if (isAgendaAuthorized) {
-                                                val eventToDisplay = firstUpcomingAgendaEvent?.let {
-                                                    val dateStr = it.originalDateTime
-                                                    var monthStr = ""
-                                                    try {
-                                                        if (dateStr.length >= 10) {
-                                                            val d = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateStr.substring(0, 10))
-                                                            if (d != null) monthStr = java.text.SimpleDateFormat("MMM", java.util.Locale.US).format(d)
-                                                        }
-                                                    } catch(e: Exception) {}
-                                                    com.example.model.CalendarEvent(day = it.day, month = monthStr, title = it.title, time = it.time)
-                                                }
-                                                UpcomingEventCard(
-                                                    event = eventToDisplay,
-                                                    onClick = { onNavigateToAgenda() },
-                                                    isLoading = isDashboardLoading || isAgendaLoading
-                                                )
-                                            } else {
-                                                ConnectCalendarCard(
-                                                    onClick = {
-                                                        (context as? android.app.Activity)?.let {
-                                                            agendaViewModel.authorizeAndFetch(it, silent = false)
-                                                        }
-                                                    }
+                                    if (tasks.isNotEmpty() || isDashboardLoading) {
+                                        item {
+                                            Box(modifier = Modifier.animateEnter(delayMillis = 50)) {
+                                                WeatherTimeCard(
+                                                    weatherInfo = weatherInfo.copy(
+                                                        dateText = if (currentDate.isNotEmpty()) currentDate else weatherInfo.dateText
+                                                    ),
+                                                    timeString = if (currentTime.isNotEmpty()) currentTime else "22:13",
+                                                    isLoading = isDashboardLoading,
+                                                    onClick = { showWeatherCitySheet = true }
                                                 )
                                             }
                                         }
                                     }
-                                }
 
-                                // 4. Empty Tasks Call To Action Card (Gray)
-                                if (!onboardingCompleted) {
-                                    item {
-                                        Box(modifier = Modifier.animateEnter(delayMillis = 150)) {
-                                            EmptyTasksCtaCard(
-                                                teams = teams,
-                                                allLists = allLists,
-                                                onTeamCreated = { teamName, days ->
-                                                    viewModel.addTeam(teamName, days)
-                                                },
-                                                onListCreated = { teamName, listName, days ->
-                                                    viewModel.addListToTeam(teamName, listName, days)
-                                                },
-                                                onCreateTaskClick = { list ->
-                                                    activeDetailTask = Task(
-                                                        id = java.util.UUID.randomUUID().toString(),
-                                                        title = "",
-                                                        client = "Viora design",
-                                                        userId = "user1",
-                                                        listId = list?.id,
-                                                        teamId = list?.teamId,
-                                                        folder = list?.name ?: "Unplanned Tasks",
-                                                        daysLeft = 7,
-                                                        status = TaskStatus.TODO
+                                    // 3. Upcoming Event Card (Green)
+                                    if (tasks.isNotEmpty() || isDashboardLoading) {
+                                        item {
+                                            Box(modifier = Modifier.animateEnter(delayMillis = 100)) {
+                                                if (isAgendaAuthorized) {
+                                                    val eventToDisplay = firstUpcomingAgendaEvent?.let {
+                                                        val dateStr = it.originalDateTime
+                                                        var monthStr = ""
+                                                        try {
+                                                            if (dateStr.length >= 10) {
+                                                                val d = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(dateStr.substring(0, 10))
+                                                                if (d != null) monthStr = java.text.SimpleDateFormat("MMM", java.util.Locale.US).format(d)
+                                                            }
+                                                        } catch(e: Exception) {}
+                                                        com.example.model.CalendarEvent(day = it.day, month = monthStr, title = it.title, time = it.time)
+                                                    }
+                                                    UpcomingEventCard(
+                                                        event = eventToDisplay,
+                                                        onClick = { onNavigateToAgenda() },
+                                                        isLoading = isDashboardLoading || isAgendaLoading
+                                                    )
+                                                } else if (!isDashboardLoading) {
+                                                    ConnectCalendarCard(
+                                                        onClick = {
+                                                            (context as? android.app.Activity)?.let {
+                                                                agendaViewModel.authorizeAndFetch(it, silent = false)
+                                                            }
+                                                        }
                                                     )
                                                 }
-                                            )
+                                            }
                                         }
                                     }
-                                }
 
-                                // 5. Next Task Card (White) or All Done State
-                                if (nextTask != null) {
-                                    item {
-                                        Box(modifier = Modifier.animateEnter(delayMillis = 150)) {
-                                            NextTaskCard(
-                                                task = nextTask!!,
-                                                onStatusClick = { selectedTaskForStatus = nextTask },
-                                                onCardClick = {
-                                                    activeDetailTask = nextTask
-                                                },
-                                                onLongPressStart = { focusedTask = nextTask }
-                                            )
+                                    // 4. Task Section (Skeleton vs Empty State vs Tasks List)
+                                    if (isDashboardLoading) {
+                                        item {
+                                            Box(modifier = Modifier.animateEnter(delayMillis = 150)) {
+                                                TaskCardSkeleton()
+                                            }
                                         }
-                                    }
-                                } else if (onboardingCompleted) {
-                                    item {
-                                        Box(modifier = Modifier.animateEnter(delayMillis = 150)) {
-                                            AllTasksDoneCard(
-                                                onCreateTaskClick = { 
-                                                    activeDetailTask = Task(
-                                                        id = "temp_${System.currentTimeMillis()}",
-                                                        title = "",
-                                                        client = "",
-                                                        status = TaskStatus.TODO,
-                                                        assigneePhotos = listOf()
+                                        item {
+                                            Box(modifier = Modifier.animateEnter(delayMillis = 200)) {
+                                                TaskListItemSkeleton()
+                                            }
+                                        }
+                                    } else if (tasks.isEmpty()) {
+                                        // Empty State (Add Task CTA or All Done)
+                                        if (!onboardingCompleted) {
+                                            item {
+                                                Box(modifier = Modifier.animateEnter(delayMillis = 150)) {
+                                                    EmptyTasksCtaCard(
+                                                        teams = teams,
+                                                        allLists = allLists,
+                                                        onTeamCreated = { teamName, days ->
+                                                            viewModel.addTeam(teamName, days)
+                                                        },
+                                                        onListCreated = { teamName, listName, days ->
+                                                            viewModel.addListToTeam(teamName, listName, days)
+                                                        },
+                                                        onCreateTaskClick = { list ->
+                                                            activeDetailTask = Task(
+                                                                id = java.util.UUID.randomUUID().toString(),
+                                                                title = "",
+                                                                client = "Viora design",
+                                                                userId = "user1",
+                                                                listId = list?.id,
+                                                                teamId = list?.teamId,
+                                                                folder = list?.name ?: "My Tasks",
+                                                                daysLeft = 7,
+                                                                status = TaskStatus.TODO
+                                                            )
+                                                        }
                                                     )
                                                 }
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // 5. Completed Tasks Card (Yellow)
-                                if (completedCount > 0) {
-                                    item {
-                                        Box(modifier = Modifier.animateEnter(delayMillis = 200)) {
-                                            CompletedTasksCard(
-                                                count = completedCount,
-                                                onClick = {
-                                                    viewModel.viewListDetail("Done Tasks")
+                                            }
+                                        } else {
+                                            item {
+                                                Box(modifier = Modifier.animateEnter(delayMillis = 150)) {
+                                                    AllTasksDoneCard(
+                                                        onCreateTaskClick = { 
+                                                            activeDetailTask = Task(
+                                                                id = "temp_${System.currentTimeMillis()}",
+                                                                title = "",
+                                                                client = "",
+                                                                status = TaskStatus.TODO,
+                                                                assigneePhotos = listOf()
+                                                            )
+                                                        }
+                                                    )
                                                 }
-                                            )
+                                            }
+                                        }
+                                    } else {
+                                        // Tasks exist: Next Task Card
+                                        if (nextTask != null) {
+                                            item {
+                                                Box(modifier = Modifier.animateEnter(delayMillis = 150)) {
+                                                    NextTaskCard(
+                                                        task = nextTask!!,
+                                                        onStatusClick = { selectedTaskForStatus = nextTask },
+                                                        onCardClick = {
+                                                            activeDetailTask = nextTask
+                                                        },
+                                                        onLongPressStart = { focusedTask = nextTask }
+                                                    )
+                                                }
+                                            }
+                                        } else if (onboardingCompleted) {
+                                            item {
+                                                Box(modifier = Modifier.animateEnter(delayMillis = 150)) {
+                                                    AllTasksDoneCard(
+                                                        onCreateTaskClick = { 
+                                                            activeDetailTask = Task(
+                                                                id = "temp_${System.currentTimeMillis()}",
+                                                                title = "",
+                                                                client = "",
+                                                                status = TaskStatus.TODO,
+                                                                assigneePhotos = listOf()
+                                                            )
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Yellow Card: Prioritize Quick Tasks if present, else Completed Tasks
+                                        val hasQuickTasks = quickTasksCount > 0
+                                        val yellowCardCount = if (hasQuickTasks) quickTasksCount else completedCount
+
+                                        if (yellowCardCount > 0) {
+                                            item {
+                                                Box(modifier = Modifier.animateEnter(delayMillis = 200)) {
+                                                    CompletedTasksCard(
+                                                        count = yellowCardCount,
+                                                        isQuickTask = hasQuickTasks,
+                                                        onClick = {
+                                                            if (hasQuickTasks) {
+                                                                viewModel.viewListDetail("Quick Tasks")
+                                                            } else {
+                                                                viewModel.viewListDetail("Done Tasks")
+                                                            }
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        // Subsequent Tasks Feed (sorted by closest deadline)
+                                        itemsIndexed(
+                                            items = subsequentTasks,
+                                            key = { _, task -> task.id }
+                                        ) { index, task ->
+                                            val staggerDelay = if (index < 5) 250 + (index * 40) else 50
+                                            Box(modifier = Modifier.animateEnter(delayMillis = staggerDelay)) {
+                                                TaskListItemCard(
+                                                    task = task,
+                                                    onStatusClick = { selectedTaskForStatus = task },
+                                                    onCardClick = {
+                                                        activeDetailTask = task
+                                                    },
+                                                    onLongPressStart = { focusedTask = task }
+                                                )
+                                            }
                                         }
                                     }
-                                }
-
-                                // 6. Subsequent Tasks Feed (sorted by closest deadline)
-                                itemsIndexed(
-                                    items = subsequentTasks,
-                                    key = { _, task -> task.id }
-                                ) { index, task ->
-                                    val staggerDelay = if (index < 5) 250 + (index * 40) else 50
-                                    Box(modifier = Modifier.animateEnter(delayMillis = staggerDelay)) {
-                                        TaskListItemCard(
-                                            task = task,
-                                            onStatusClick = { selectedTaskForStatus = task },
-                                            onCardClick = {
-                                                activeDetailTask = task
-                                            },
-                                            onLongPressStart = { focusedTask = task }
-                                        )
-                                    }
-                                }
 
                                 // 7. Loading more indicator at bottom of feed
                                 if (isLoadingMore) {
@@ -572,14 +687,7 @@ fun HomeScreen(
                 selectedTab = currentTab,
                 onTabSelected = { tab -> viewModel.selectTab(tab) },
                 onNewTaskClick = {
-                    activeDetailTask = Task(
-                        id = java.util.UUID.randomUUID().toString(),
-                        title = "",
-                        client = "Viora design",
-                        userId = "user1",
-                        daysLeft = 7,
-                        status = TaskStatus.TODO
-                    )
+                    showSelectListForNewTaskSheet = true
                 }
             )
         }
@@ -591,7 +699,7 @@ fun HomeScreen(
     }
 
     var lastViewingList by remember { mutableStateOf<String?>(null) }
-    var lastViewingListTeam by remember { mutableStateOf("Personal") }
+    var lastViewingListTeam by remember { mutableStateOf("Personal Space") }
     if (viewingList != null) {
         lastViewingList = viewingList
         if (viewingTeam != null) {
@@ -681,6 +789,7 @@ fun HomeScreen(
                 getTeamMembers = { teamId -> viewModel.getTeamMembers(teamId) },
                 getTeamMemberUsers = { teamId -> viewModel.getTeamMemberUsers(teamId) },
                 currentUsername = currentUserName,
+                onFetchTaskDetails = { taskId -> viewModel.fetchTaskDetails(taskId) },
                 backHandlerEnabled = activeDetailTask != null,
                 modifier = Modifier.fillMaxSize()
             )
@@ -738,24 +847,154 @@ fun HomeScreen(
                                     clip = true
                                 }
                         ) {
-                            if (latestTask.id == nextTask?.id) {
-                                NextTaskCard(
-                                    task = latestTask,
-                                    onStatusClick = { selectedTaskForStatus = latestTask },
-                                    onCardClick = {
-                                        activeDetailTask = latestTask
-                                        focusedTask = null
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                if (latestTask.id == nextTask?.id) {
+                                    NextTaskCard(
+                                        task = latestTask,
+                                        onStatusClick = { selectedTaskForStatus = latestTask },
+                                        onCardClick = {
+                                            activeDetailTask = latestTask
+                                            focusedTask = null
+                                        }
+                                    )
+                                } else {
+                                    TaskListItemCard(
+                                        task = latestTask,
+                                        onStatusClick = { selectedTaskForStatus = latestTask },
+                                        onCardClick = {
+                                            activeDetailTask = latestTask
+                                            focusedTask = null
+                                        }
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                // Options Menu Button below card, centered
+                                Box {
+                                    com.example.ui.components.VioraHeaderIconButton(
+                                        icon = Icons.Rounded.MoreHoriz,
+                                        contentDescription = "Task Options",
+                                        onClick = { showFocusTaskMenu = true }
+                                    )
+
+                                    MaterialTheme(
+                                        colorScheme = MaterialTheme.colorScheme.copy(
+                                            surface = Color.White,
+                                            surfaceContainer = Color.White,
+                                            surfaceContainerHigh = Color.White,
+                                            surfaceContainerLow = Color.White,
+                                            surfaceContainerLowest = Color.White,
+                                            surfaceContainerHighest = Color.White,
+                                            onSurface = Color.Black
+                                        )
+                                    ) {
+                                        DropdownMenu(
+                                            expanded = showFocusTaskMenu,
+                                            onDismissRequest = { showFocusTaskMenu = false },
+                                            shape = RoundedCornerShape(24.dp),
+                                            containerColor = Color.White,
+                                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(
+                                                            Icons.Rounded.OpenInNew,
+                                                            contentDescription = null,
+                                                            tint = Color.Black,
+                                                            modifier = Modifier.size(22.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(12.dp))
+                                                        Text(
+                                                            "Open Details",
+                                                            color = Color.Black,
+                                                            fontFamily = SFProDisplayFontFamily,
+                                                            fontSize = 15.sp,
+                                                            fontWeight = FontWeight.Medium
+                                                        )
+                                                    }
+                                                },
+                                                onClick = {
+                                                    showFocusTaskMenu = false
+                                                    focusedTask = null
+                                                    activeDetailTask = latestTask
+                                                },
+                                                modifier = Modifier.height(44.dp),
+                                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+                                            )
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(
+                                                            Icons.Rounded.Share,
+                                                            contentDescription = null,
+                                                            tint = Color.Black,
+                                                            modifier = Modifier.size(22.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(12.dp))
+                                                        Text(
+                                                            "Share Link",
+                                                            color = Color.Black,
+                                                            fontFamily = SFProDisplayFontFamily,
+                                                            fontSize = 15.sp,
+                                                            fontWeight = FontWeight.Medium
+                                                        )
+                                                    }
+                                                },
+                                                onClick = {
+                                                    showFocusTaskMenu = false
+                                                    val shareUrl = com.example.util.VioraDeepLinkHandler.createTaskUrl(
+                                                        taskId = latestTask.id,
+                                                        title = latestTask.title,
+                                                        client = latestTask.client,
+                                                        daysLeft = latestTask.daysLeft,
+                                                        status = latestTask.status.name,
+                                                        description = latestTask.description
+                                                    )
+                                                    val sendIntent = android.content.Intent().apply {
+                                                        action = android.content.Intent.ACTION_SEND
+                                                        putExtra(android.content.Intent.EXTRA_TEXT, "Check out this task on Viora:\n\"${latestTask.title}\"\n$shareUrl")
+                                                        type = "text/plain"
+                                                    }
+                                                    val shareIntent = android.content.Intent.createChooser(sendIntent, "Share Task")
+                                                    context.startActivity(shareIntent)
+                                                },
+                                                modifier = Modifier.height(44.dp),
+                                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+                                            )
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(
+                                                            Icons.Rounded.DeleteOutline,
+                                                            contentDescription = null,
+                                                            tint = Color.Red,
+                                                            modifier = Modifier.size(22.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(12.dp))
+                                                        Text(
+                                                            "Remove Task",
+                                                            color = Color.Red,
+                                                            fontFamily = SFProDisplayFontFamily,
+                                                            fontSize = 15.sp,
+                                                            fontWeight = FontWeight.Medium
+                                                        )
+                                                    }
+                                                },
+                                                onClick = {
+                                                    showFocusTaskMenu = false
+                                                    showFocusTaskDeleteConfirm = true
+                                                },
+                                                modifier = Modifier.height(44.dp),
+                                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+                                            )
+                                        }
                                     }
-                                )
-                            } else {
-                                TaskListItemCard(
-                                    task = latestTask,
-                                    onStatusClick = { selectedTaskForStatus = latestTask },
-                                    onCardClick = {
-                                        activeDetailTask = latestTask
-                                        focusedTask = null
-                                    }
-                                )
+                                }
                             }
                         }
                     }
@@ -799,12 +1038,79 @@ fun HomeScreen(
             }
         }
 
+        // Focus Task Delete Confirmation Dialog
+        if (showFocusTaskDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { showFocusTaskDeleteConfirm = false },
+                containerColor = Color(0xFF2A2A2A),
+                title = {
+                    Text(
+                        text = "Are you sure about this?",
+                        color = Color.White,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        fontFamily = SFProDisplayFontFamily,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                text = {
+                    Text(
+                        text = "By deleting this task, it will be permanently unavailable.",
+                        color = Color.LightGray,
+                        textAlign = TextAlign.Center,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                        fontFamily = SFProDisplayFontFamily,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                confirmButton = {},
+                dismissButton = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val taskId = lastFocusedTask?.id
+                                showFocusTaskDeleteConfirm = false
+                                focusedTask = null
+                                if (taskId != null) {
+                                    viewModel.deleteTask(taskId)
+                                    Toast.makeText(context, "Task deleted", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF4D4D)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp),
+                            shape = RoundedCornerShape(28.dp)
+                        ) {
+                            Text("Delete", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = SFProDisplayFontFamily)
+                        }
+                        TextButton(
+                            onClick = { showFocusTaskDeleteConfirm = false },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                        ) {
+                            Text("Cancel", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium, fontFamily = SFProDisplayFontFamily)
+                        }
+                    }
+                }
+            )
+        }
+
         // Custom Status Selector Sheet/Overlay (to handle status changing cleanly)
         selectedTaskForStatus?.let { task ->
             StatusSelectionDrawer(
                 task = task,
                 onStatusSelected = { newStatus ->
                     viewModel.updateTaskStatus(task.id, newStatus)
+                    if (newStatus == TaskStatus.DONE) {
+                        completedTaskForCelebration = task
+                    }
                     selectedTaskForStatus = null
                     
                     val statusMessage = when (newStatus) {
@@ -812,9 +1118,125 @@ fun HomeScreen(
                         TaskStatus.IN_PROGRESS -> "Moved to In Progress"
                         TaskStatus.TODO -> "Moved to To-Do"
                     }
-                    Toast.makeText(context, statusMessage, Toast.LENGTH_SHORT).show()
+                    if (newStatus != TaskStatus.DONE) {
+                        Toast.makeText(context, statusMessage, Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onDismiss = { selectedTaskForStatus = null }
+            )
+        }
+
+        // Rive Task Done Celebration Dialog
+        completedTaskForCelebration?.let { task ->
+            com.example.ui.components.RiveTaskDoneDialog(
+                visible = true,
+                onDismiss = { completedTaskForCelebration = null },
+                taskTitle = task.title
+            )
+        }
+
+        // Deep Link Team Invite Dialog
+        pendingTeamInvite?.let { invite ->
+            val pendingInvitesList by viewModel.pendingTeamInvitations.collectAsState()
+            val matchedInvite = pendingInvitesList.find { it.teamId == invite.teamId || it.id == invite.inviteId }
+
+            val displayTeamName = invite.teamName
+                ?: matchedInvite?.teamName
+                ?: viewModel.getTeamById(invite.teamId)?.name
+                ?: "Team ${invite.teamId.take(6)}"
+
+            val displayInviter = invite.inviterName
+                ?: matchedInvite?.invitedBy?.username
+                ?: matchedInvite?.invitedBy?.fullName
+
+            val inviteIdToUse = invite.inviteId ?: matchedInvite?.id
+
+            com.example.ui.components.TeamInviteDialog(
+                teamId = invite.teamId,
+                teamName = displayTeamName,
+                inviterName = displayInviter,
+                onAccept = {
+                    if (!inviteIdToUse.isNullOrBlank()) {
+                        viewModel.acceptTeamInvitation(inviteIdToUse) { success ->
+                            if (success) {
+                                viewModel.viewTeamDetail(displayTeamName)
+                            }
+                        }
+                    } else {
+                        val myUsername = currentUserName.ifBlank { "Me" }
+                        viewModel.updateTeamMembers(
+                            teamName = displayTeamName,
+                            addUsernames = listOf(myUsername)
+                        )
+                        viewModel.viewTeamDetail(displayTeamName)
+                    }
+                    pendingTeamInvite = null
+                    Toast.makeText(context, "Joined $displayTeamName!", Toast.LENGTH_SHORT).show()
+                },
+                onDecline = {
+                    if (!inviteIdToUse.isNullOrBlank()) {
+                        viewModel.declineTeamInvitation(inviteIdToUse)
+                    }
+                    pendingTeamInvite = null
+                },
+                onDismiss = { pendingTeamInvite = null }
+            )
+        }
+
+        // Weather City Selection BottomSheet
+        com.example.ui.components.WeatherCityBottomSheet(
+            visible = showWeatherCitySheet,
+            onDismiss = { showWeatherCitySheet = false },
+            taskViewModel = viewModel
+        )
+
+        // Quick Task BottomSheet
+        if (showQuickTaskSheet) {
+            com.example.ui.components.QuickTaskBottomSheet(
+                onDismiss = { showQuickTaskSheet = false },
+                onTaskCreate = { title ->
+                    viewModel.createQuickTask(title)
+                }
+            )
+        }
+
+        // Select List for New Task BottomSheet
+        if (showSelectListForNewTaskSheet) {
+            val personalListIdVal by viewModel.personalListId.collectAsState()
+            com.example.ui.components.SelectListForNewTaskBottomSheet(
+                allLists = allLists,
+                allTeams = teams,
+                personalListId = personalListIdVal,
+                getTeamName = { teamId -> viewModel.getTeamNameById(teamId) },
+                getTeamIdByName = { teamName -> viewModel.getTeamIdByName(teamName) },
+                onDismiss = { showSelectListForNewTaskSheet = false },
+                onQuickTaskSelected = {
+                    showSelectListForNewTaskSheet = false
+                    showQuickTaskSheet = true
+                },
+                onListSelected = { selectedList ->
+                    showSelectListForNewTaskSheet = false
+                    val parentTeamName = if (selectedList.teamId.isNotBlank() && selectedList.teamId != "personal_space") {
+                        viewModel.getTeamNameById(selectedList.teamId)
+                    } else {
+                        "Personal Space"
+                    }
+                    val defaultDays = selectedList.defaultDeadlineDays
+                        ?: viewModel.getTeamDefaultDeadline(selectedList.teamId)
+                        ?: viewModel.getUserDefaultDeadline()
+
+                    activeDetailTask = Task(
+                        id = java.util.UUID.randomUUID().toString(),
+                        title = "",
+                        client = parentTeamName,
+                        userId = "user1",
+                        listId = selectedList.id,
+                        teamId = selectedList.teamId.ifBlank { "personal_space" },
+                        folder = selectedList.name,
+                        daysLeft = defaultDays,
+                        status = TaskStatus.TODO
+                    )
+                }
             )
         }
     }
@@ -826,7 +1248,9 @@ fun HeaderSection(
     onVioraPassClick: () -> Unit = {},
     userHandle: String = userName,
     avatarUri: String? = null,
+    unreadNotificationsCount: Int = 0,
     modifier: Modifier = Modifier,
+    onQuickTaskClick: (() -> Unit)? = null,
     onSearchClick: () -> Unit,
     onNotificationClick: () -> Unit,
     onProfileClick: () -> Unit
@@ -863,6 +1287,15 @@ fun HeaderSection(
             }
         },
         actions = {
+            if (onQuickTaskClick != null) {
+                com.example.ui.components.VioraHeaderIconButton(
+                    icon = Icons.Rounded.Bolt,
+                    contentDescription = "Quick Task",
+                    onClick = onQuickTaskClick,
+                    tint = VioraNeonLime,
+                    modifier = Modifier.testTag("quick_task_button")
+                )
+            }
 
             com.example.ui.components.VioraHeaderIconButton(
                 icon = Icons.Rounded.Search,
@@ -876,7 +1309,19 @@ fun HeaderSection(
                 icon = Icons.Rounded.Notifications,
                 contentDescription = "Notifications",
                 onClick = onNotificationClick,
-                modifier = Modifier.testTag("notification_button")
+                modifier = Modifier.testTag("notification_button"),
+                badge = if (unreadNotificationsCount > 0) {
+                    {
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFB4FF00))
+                                .border(1.5.dp, Color.Black, CircleShape)
+                                .align(Alignment.TopEnd)
+                        )
+                    }
+                } else null
             )
 
             com.example.ui.components.VioraHeaderCustomButton(
@@ -897,13 +1342,20 @@ fun HeaderSection(
 fun WeatherTimeCard(
     weatherInfo: WeatherInfo,
     timeString: String,
-    isLoading: Boolean = false
+    isLoading: Boolean = false,
+    onClick: (() -> Unit)? = null
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            
-            .testTag("weather_time_card"),
+            .testTag("weather_time_card")
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable { onClick() }
+                } else {
+                    Modifier
+                }
+            ),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = VioraWeatherCard)
     ) {
@@ -1264,6 +1716,162 @@ fun UpcomingEventCard(
 }
 
 @Composable
+fun TaskCardSkeleton() {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("task_card_skeleton"),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF26262A)),
+        border = BorderStroke(1.dp, Color(0xFF38383E))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 16.dp)
+        ) {
+            // Header Row Shimmer
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(90.dp)
+                        .height(16.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .shimmerEffect()
+                )
+                Box(
+                    modifier = Modifier
+                        .width(75.dp)
+                        .height(16.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .shimmerEffect()
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            // Title Shimmer lines
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .shimmerEffect()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.45f)
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .shimmerEffect()
+            )
+            Spacer(modifier = Modifier.height(18.dp))
+            // Bottom Actions Row Shimmer
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(96.dp)
+                        .height(32.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .shimmerEffect()
+                )
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .shimmerEffect()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TaskListItemSkeleton() {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("task_list_item_skeleton"),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF26262A)),
+        border = BorderStroke(1.dp, Color(0xFF38383E))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(80.dp)
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .shimmerEffect()
+                )
+                Box(
+                    modifier = Modifier
+                        .width(65.dp)
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .shimmerEffect()
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(24.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .shimmerEffect()
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(90.dp)
+                        .height(30.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .shimmerEffect()
+                )
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .shimmerEffect()
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun NextTaskCard(
     task: Task,
     onStatusClick: () -> Unit,
@@ -1408,7 +2016,7 @@ fun NextTaskCard(
                     }
                 }
                 
-                // Assignee avatars on the bottom-right
+                // Assignee avatars or count badge on the bottom-right
                 if (task.assigneePhotos.isNotEmpty()) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1420,6 +2028,7 @@ fun NextTaskCard(
                         displayPhotos.forEach { photo ->
                             com.example.ui.components.UserAvatar(
                                 userId = photo,
+                                avatarUri = com.example.util.UserAvatarRegistry.getAvatarUrl(photo),
                                 modifier = Modifier.border(1.5.dp, Color.White, CircleShape)
                             )
                         }
@@ -1441,6 +2050,30 @@ fun NextTaskCard(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                        }
+                    }
+                } else if (task.assigneesCount > 0) {
+                    Surface(
+                        color = Color(0xFFF1F3F5),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Person,
+                                contentDescription = null,
+                                tint = VioraGrayText,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "${task.assigneesCount}",
+                                color = VioraGrayText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 } else {
@@ -1569,6 +2202,7 @@ fun AllTasksDoneCard(
 @Composable
 fun CompletedTasksCard(
     count: Int,
+    isQuickTask: Boolean = false,
     onClick: () -> Unit
 ) {
     Card(
@@ -1598,7 +2232,7 @@ fun CompletedTasksCard(
                     fontWeight = FontWeight.Normal
                 )
                 Text(
-                    text = "$count completed tasks",
+                    text = if (isQuickTask) "$count quick tasks" else "$count completed tasks",
                     color = Color.Black,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
@@ -1623,7 +2257,7 @@ fun CompletedTasksCard(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.ArrowForward,
+                    imageVector = if (isQuickTask) Icons.Rounded.Bolt else Icons.Rounded.ArrowForward,
                     contentDescription = "Review",
                     tint = Color.Black,
                     modifier = Modifier.size(24.dp)
@@ -1959,6 +2593,7 @@ fun EmptyTasksCtaCard(
 
     var showCreateTeamSheet by remember { mutableStateOf(false) }
     var showCreateListSheet by remember { mutableStateOf(false) }
+    var showInviteSheet by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -2155,6 +2790,32 @@ fun EmptyTasksCtaCard(
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Contextual collaboration trigger for early lifecycle
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable { showInviteSheet = true }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Share,
+                    contentDescription = null,
+                    tint = VioraNeonLime,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = "Working with a client or team? Invite them",
+                    color = VioraNeonLime,
+                    fontSize = 12.sp,
+                    fontFamily = SFProDisplayFontFamily,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
     }
 
@@ -2191,6 +2852,16 @@ fun EmptyTasksCtaCard(
                 onListCreated(activeTeam, listName, days)
                 showCreateListSheet = false
             }
+        )
+    }
+
+    if (showInviteSheet) {
+        com.example.ui.components.InviteBottomSheet(
+            visible = showInviteSheet,
+            onDismiss = { showInviteSheet = false },
+            inviteContext = com.example.ui.components.InviteContext.GeneralCollaboration(
+                inviterName = userTeams.firstOrNull() ?: "You"
+            )
         )
     }
 }
@@ -2389,7 +3060,7 @@ fun TaskListItemCard(
                 }
 
                 // Team/Assignee indicators
-                if (task.assigneePhotos.isEmpty()) {
+                if (task.assigneePhotos.isEmpty() && task.assigneesCount == 0) {
                     Row(
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
@@ -2411,6 +3082,30 @@ fun TaskListItemCard(
                             fontWeight = FontWeight.Medium
                         )
                     }
+                } else if (task.assigneePhotos.isEmpty() && task.assigneesCount > 0) {
+                    Surface(
+                        color = Color(0xFFF1F3F5),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Person,
+                                contentDescription = null,
+                                tint = VioraGrayText,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "${task.assigneesCount}",
+                                color = VioraGrayText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 } else {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -2422,6 +3117,7 @@ fun TaskListItemCard(
                         displayPhotos.forEach { photo ->
                             com.example.ui.components.UserAvatar(
                                 userId = photo,
+                                avatarUri = com.example.util.UserAvatarRegistry.getAvatarUrl(photo),
                                 modifier = Modifier.border(1.5.dp, Color.White, CircleShape)
                             )
                         }

@@ -44,6 +44,9 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    private val _infoMessage = MutableStateFlow<String?>(null)
+    val infoMessage: StateFlow<String?> = _infoMessage.asStateFlow()
+
     private val _isSuccess = MutableStateFlow(false)
     val isSuccess: StateFlow<Boolean> = _isSuccess.asStateFlow()
 
@@ -51,20 +54,22 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     val isLoginSuccess: StateFlow<Boolean> = _isLoginSuccess.asStateFlow()
 
     fun updateAvatarUri(uri: String?) { _avatarUri.value = uri }
-    fun updateEmail(newEmail: String) { _email.value = newEmail }
-    fun updateOtp(newOtp: String) { _otp.value = newOtp }
+    fun updateEmail(newEmail: String) { _email.value = newEmail.trim() }
+    fun updateOtp(newOtp: String) { _otp.value = newOtp.trim() }
     fun updateFullName(newName: String) { _fullName.value = newName }
-    fun updateUsername(newUsername: String) { _username.value = newUsername }
+    fun updateUsername(newUsername: String) { _username.value = newUsername.trim() }
     fun updatePassword(newPassword: String) { _password.value = newPassword }
     fun updateDefaultDeadline(newDeadline: String) { _defaultDeadline.value = newDeadline }
     fun updateCustomDays(days: Int) { _customDays.value = days }
     fun clearError() { _errorMessage.value = null }
+    fun clearInfo() { _infoMessage.value = null }
     fun resetSuccess() { _isSuccess.value = false; _isLoginSuccess.value = false }
 
     fun submitEmail() {
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
+            _infoMessage.value = null
             try {
                 val response = VioraNetworkModule.api.requestOtp(RequestOtpDto(email.value))
                 if (response.success) {
@@ -86,6 +91,46 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    fun resendOtp() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+            _infoMessage.value = null
+            try {
+                val response = VioraNetworkModule.api.requestOtp(RequestOtpDto(email.value))
+                if (response.success) {
+                    _infoMessage.value = "Verification code resent to ${email.value}"
+                } else {
+                    _errorMessage.value = response.message
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = com.example.util.ErrorUtil.getErrorMessage(e)
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun requestPasswordReset() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+            _infoMessage.value = null
+            try {
+                val response = VioraNetworkModule.api.requestOtp(RequestOtpDto(email.value))
+                if (response.success) {
+                    _infoMessage.value = "Password reset instructions sent to ${email.value}"
+                } else {
+                    _errorMessage.value = response.message
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = com.example.util.ErrorUtil.getErrorMessage(e)
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
     
     fun login() {
         viewModelScope.launch {
@@ -95,6 +140,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val response = VioraNetworkModule.api.login(LoginDto(email.value, password.value))
                 if (response.success && response.data != null) {
                     saveTokens(response.data)
+                    com.example.service.VioraFirebaseMessagingService.initializeAndSubscribe(getApplication())
                     _isLoginSuccess.value = true
                 } else {
                     _errorMessage.value = response.message
@@ -120,7 +166,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     else -> 7
                 }
                 
-                val avatarToSend = com.example.util.ImageUtil.toSmallBase64(getApplication(), avatarUri.value)
                 val req = VerifyOtpDto(
                     email = email.value,
                     otp = otp.value,
@@ -128,13 +173,33 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     username = username.value,
                     deadline = days,
                     password = password.value,
-                    avatar = avatarToSend
+                    avatar = null
                 )
                 
                 val response = VioraNetworkModule.api.verifyOtp(req)
                 if (response.success && response.data != null) {
                     saveTokens(response.data)
+                    com.example.service.VioraFirebaseMessagingService.initializeAndSubscribe(getApplication())
                     saveDeadlineSettingLocally()
+
+                    // Upload chosen avatar now that authentication tokens are acquired
+                    val avatarToUpload = avatarUri.value
+                    if (!avatarToUpload.isNullOrEmpty() && (avatarToUpload.startsWith("content://") || avatarToUpload.startsWith("file://"))) {
+                        viewModelScope.launch {
+                            try {
+                                val uploadRes = com.example.util.ImageUtil.uploadImageUri(getApplication(), android.net.Uri.parse(avatarToUpload))
+                                uploadRes.onSuccess { remoteUrl ->
+                                    val fullUrl = com.example.util.ImageUtil.resolveAvatarUrl(remoteUrl) ?: remoteUrl
+                                    val prefs = getApplication<Application>().getSharedPreferences("viora_auth_prefs", Context.MODE_PRIVATE)
+                                    prefs.edit().putString("user_avatar_uri", fullUrl).apply()
+                                    VioraNetworkModule.api.updateCurrentUser(com.example.model.viora.UpdateUserDto(avatar = fullUrl))
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+
                     _isLoginSuccess.value = true
                 } else {
                     _errorMessage.value = response.message
@@ -152,8 +217,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         tm?.saveTokens(authData.tokens.accessToken, authData.tokens.refreshToken)
         
         val prefs = getApplication<Application>().getSharedPreferences("viora_auth_prefs", Context.MODE_PRIVATE)
-        val rawAvatar = authData.user.avatar ?: avatarUri.value
-        val avatarToSave = if (com.example.util.ImageUtil.isLocalFileOrUriValid(rawAvatar)) rawAvatar else null
+        val backendAvatar = com.example.util.ImageUtil.resolveAvatarUrl(authData.user.avatar)
+        val avatarToSave = backendAvatar ?: avatarUri.value
         prefs.edit()
             .putBoolean("is_registered", true)
             .putString("user_id", authData.user.id)
@@ -162,6 +227,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             .putString("user_username", authData.user.username)
             .putString("user_avatar_uri", avatarToSave)
             .apply()
+
+        com.example.util.AutofillUtil.commitAutofill(getApplication())
     }
     
     fun completeProfile() {

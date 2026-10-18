@@ -40,6 +40,22 @@ interface VioraApiService {
     suspend fun updateTeam(@Path("id") id: String, @Body request: UpdateTeamDto): GenericResponse<TeamResponseDto>
     @DELETE("teams/{id}")
     suspend fun deleteTeam(@Path("id") id: String): GenericResponse<Any>
+
+    // Team Invitations
+    @GET("teams/invitations")
+    suspend fun getTeamInvitations(): GenericResponse<List<TeamInviteResponseDto>>
+    @POST("teams/invitations/{inviteId}/accept")
+    suspend fun acceptTeamInvitation(@Path("inviteId") inviteId: String): GenericResponse<MessageResponseDto>
+    @POST("teams/invitations/{inviteId}/decline")
+    suspend fun declineTeamInvitation(@Path("inviteId") inviteId: String): GenericResponse<MessageResponseDto>
+
+    // Users Search
+    @GET("users/search")
+    suspend fun searchUsers(
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 20
+    ): GenericResponse<UserSearchResponseDto>
+
     // Lists
     @POST("lists")
     suspend fun createList(@Body request: CreateListDto): GenericResponse<ListWithMetaResponseDto>
@@ -94,4 +110,51 @@ interface VioraApiService {
     suspend fun syncPull(@Query("lastSyncAt") lastSyncAt: String? = null): GenericResponse<SyncPullResponseDto>
     @POST("v1/sync")
     suspend fun syncPush(@Body request: SyncPushDto): GenericResponse<SyncPushResponseDto>
+
+    // Uploads
+    @Multipart
+    @POST("uploads")
+    suspend fun uploadFile(
+        @Part file: okhttp3.MultipartBody.Part
+    ): GenericResponse<FileUploadDataDto>
+
+    @DELETE("uploads")
+    suspend fun deleteFile(
+        @Query("key") key: String
+    ): GenericResponse<FileDeleteDataDto>
+
+    // Notifications & Inbox
+    @GET("notifications/inbox")
+    suspend fun getNotificationsInbox(
+        @Query("page") page: Int = 1,
+        @Query("perPage") perPage: Int = 20,
+        @Query("isRead") isRead: Boolean? = null,
+        @Query("type") type: String? = null
+    ): GenericResponse<PaginatedUserNotificationsResponseDto>
+
+    @GET("notifications/inbox/unread-count")
+    suspend fun getUnreadNotificationsCount(): GenericResponse<UnreadNotificationsCountResponseDto>
+
+    @GET("notifications/inbox/{id}")
+    suspend fun getNotification(
+        @Path("id") id: String
+    ): GenericResponse<UserNotificationResponseDto>
+
+    @PATCH("notifications/inbox/{id}/read")
+    suspend fun markNotificationAsRead(
+        @Path("id") id: String
+    ): GenericResponse<UserNotificationResponseDto>
+
+    @PATCH("notifications/inbox/read-all")
+    suspend fun markAllNotificationsAsRead(): GenericResponse<MarkAllNotificationsReadResponseDto>
+
+    @POST("notifications/devices")
+    suspend fun registerDeviceToken(
+        @Body request: RegisterDeviceTokenDto
+    ): GenericResponse<Any>
+
+    @DELETE("notifications/devices/{token}")
+    suspend fun deleteDeviceToken(
+        @Path("token") token: String
+    ): GenericResponse<Any>
 }

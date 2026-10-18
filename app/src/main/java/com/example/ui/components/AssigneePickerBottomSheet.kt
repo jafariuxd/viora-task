@@ -1,5 +1,9 @@
 package com.example.ui.components
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -15,6 +19,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,6 +39,7 @@ import com.example.ui.theme.SFProDisplayFontFamily
 import com.example.ui.theme.VioraNeonLime
 import com.example.model.User
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +49,9 @@ fun AssigneePickerBottomSheet(
     initialAssignees: List<String>,
     allTeamMembers: List<User>,
     currentUsername: String,
+    searchPlaceholder: String = "Search users to assign",
+    inviteUrl: String? = null,
+    onInviteClick: (() -> Unit)? = null,
     onSubmit: (List<String>) -> Unit
 ) {
     if (visible) {
@@ -49,15 +60,15 @@ fun AssigneePickerBottomSheet(
             sheetState = sheetState,
             shape = com.example.ui.utils.dynamicBottomSheetShape(sheetState, 28.dp),
             onDismissRequest = onDismiss,
-            containerColor = Color(0xFF1C1C1C),
+            containerColor = Color(0xFF1C1C1E),
             dragHandle = {
                 Box(
                     modifier = Modifier
-                        .padding(vertical = 12.dp)
+                        .padding(top = 12.dp, bottom = 8.dp)
                         .width(36.dp)
                         .height(4.dp)
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.3f))
+                        .background(Color.White.copy(alpha = 0.25f))
                 )
             }
         ) {
@@ -65,6 +76,9 @@ fun AssigneePickerBottomSheet(
                 initialAssignees = initialAssignees,
                 allTeamMembers = allTeamMembers,
                 currentUsername = currentUsername,
+                searchPlaceholder = searchPlaceholder,
+                inviteUrl = inviteUrl,
+                onInviteClick = onInviteClick,
                 onSubmit = {
                     onSubmit(it)
                     onDismiss()
@@ -79,24 +93,26 @@ fun AssigneePickerContent(
     initialAssignees: List<String>,
     allTeamMembers: List<User>,
     currentUsername: String,
+    searchPlaceholder: String = "Search users to assign",
+    inviteUrl: String? = null,
+    onInviteClick: (() -> Unit)? = null,
     onSubmit: (List<String>) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
-    var selectedAssignees by remember(initialAssignees) { mutableStateOf(initialAssignees.toSet()) }
+    val cleanInitial = remember(initialAssignees) {
+        initialAssignees.map { it.removePrefix("@") }.toSet()
+    }
+    var selectedAssignees by remember(cleanInitial) { mutableStateOf(cleanInitial) }
+    var isCopied by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val effectiveInviteLink = remember(inviteUrl) {
+        inviteUrl ?: "https://viora.group/invite?ref=assignee"
+    }
     
     // Determine the users to show based on search
     val filteredMembers = remember(allTeamMembers, searchQuery, currentUsername) {
-        val all = allTeamMembers.ifEmpty {
-            // Fallback mock list if empty
-            listOf(
-                User("1", "Delaram", "delaram", null, 0),
-                User("2", "Mamad", "mamad", null, 0),
-                User("3", "Mohre", "mohre", null, 0),
-                User("4", "Noorin", "noorin", null, 0),
-                User("5", "Sorush", "sorush", null, 0),
-                User("6", "Tala", "tala", null, 0)
-            )
-        }
+        val all = allTeamMembers
         
         // Sort so that current user is always first
         val sorted = all.sortedBy { 
@@ -159,7 +175,7 @@ fun AssigneePickerContent(
                             Box {
                                 if (searchQuery.isEmpty()) {
                                     Text(
-                                        text = "Search users to assign",
+                                        text = searchPlaceholder,
                                         color = Color(0xFF8E8E93),
                                         fontSize = 16.sp,
                                         fontFamily = SFProDisplayFontFamily
@@ -174,7 +190,56 @@ fun AssigneePickerContent(
                 Spacer(modifier = Modifier.height(28.dp))
 
                 // Users grid (3 equal columns)
-                filteredMembers.chunked(3).forEach { rowUsers ->
+                if (filteredMembers.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "No members found",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = SFProDisplayFontFamily
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Can't find who you're looking for? Invite them to Viora.",
+                            color = Color(0xFFAAAAAA),
+                            fontSize = 14.sp,
+                            fontFamily = SFProDisplayFontFamily
+                        )
+                        if (onInviteClick != null) {
+                            Spacer(modifier = Modifier.height(18.dp))
+                            Button(
+                                onClick = onInviteClick,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = VioraNeonLime,
+                                    contentColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier.height(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = Color.Black
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Invite Collaborator",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = SFProDisplayFontFamily
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    filteredMembers.chunked(3).forEach { rowUsers ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Start
@@ -182,8 +247,8 @@ fun AssigneePickerContent(
                         for (i in 0 until 3) {
                             if (i < rowUsers.size) {
                                 val user = rowUsers[i]
-                                val userKey = user.username.lowercase()
-                                val isSelected = selectedAssignees.contains(userKey)
+                                val userKey = user.username.removePrefix("@")
+                                val isSelected = selectedAssignees.contains(userKey) || selectedAssignees.contains(user.username)
                                 val isCurrentUser = user.username.equals(currentUsername, ignoreCase = true) || user.name.equals(currentUsername, ignoreCase = true)
                                 val displayName = if (isCurrentUser) "You" else user.name.ifBlank { user.username }
 
@@ -212,8 +277,12 @@ fun AssigneePickerContent(
                                                 .clip(CircleShape)
                                                 .background(Color(0xFF636366))
                                         ) {
+                                            val resolvedAvatar = user.avatarUrl 
+                                                ?: com.example.util.UserAvatarRegistry.getAvatarUrl(user.username)
+                                                ?: com.example.util.UserAvatarRegistry.getAvatarUrl(user.id)
                                             UserAvatar(
                                                 userId = user.username,
+                                                avatarUri = resolvedAvatar,
                                                 size = 76.dp
                                             )
                                         }
@@ -247,6 +316,50 @@ fun AssigneePickerContent(
                     }
                     Spacer(modifier = Modifier.height(28.dp))
                 }
+
+                // Copy Link Outlined / Tonal Button (replacing "Can't find someone?" prompt)
+                OutlinedButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        val clip = ClipData.newPlainText("Viora Invite Link", effectiveInviteLink)
+                        clipboard?.setPrimaryClip(clip)
+                        Toast.makeText(context, "Invite link copied to clipboard", Toast.LENGTH_SHORT).show()
+                        isCopied = true
+                        coroutineScope.launch {
+                            delay(2200)
+                            isCopied = false
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isCopied) VioraNeonLime else Color.White.copy(alpha = 0.15f)
+                    ),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isCopied) VioraNeonLime.copy(alpha = 0.12f) else Color(0xFF262628),
+                        contentColor = if (isCopied) VioraNeonLime else Color.White
+                    )
+                ) {
+                    Icon(
+                        imageVector = if (isCopied) Icons.Rounded.Check else Icons.Rounded.Link,
+                        contentDescription = null,
+                        tint = if (isCopied) VioraNeonLime else Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (isCopied) "Link Copied!" else "Copy Invite Link",
+                        fontSize = 16.sp,
+                        fontFamily = SFProDisplayFontFamily,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+            }
             }
         }
 

@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.CalendarToday
 import androidx.compose.material.icons.rounded.ViewAgenda
+import androidx.compose.material.icons.rounded.Sync
+import com.example.ui.components.GoogleCalendarConfigBottomSheet
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -88,7 +90,7 @@ fun AgendaScreen(
     val isFetchingMore by viewModel.isFetchingMore.collectAsState()
     val paginationError by viewModel.paginationError.collectAsState()
     val listState = rememberLazyListState()
-    
+
     val isAtBottom by remember {
         derivedStateOf {
             val lastVisibleItem = listState.layoutInfo.visibleItemsInfo.lastOrNull()
@@ -102,14 +104,15 @@ fun AgendaScreen(
         }
     }
 
-
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            viewModel.handleAuthorizationResult(context, result.data)
-        } else {
-            viewModel.setError("Google Sign-In failed or was canceled. (Code: ${result.resultCode})\nPlease make sure you have added your app's SHA-1 to your Google Cloud Console / Firebase project.")
+        viewModel.handleAuthorizationResult(context, result.data, result.resultCode)
+    }
+
+    LaunchedEffect(error) {
+        if (!error.isNullOrBlank()) {
+            android.widget.Toast.makeText(context, error, android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
@@ -121,7 +124,11 @@ fun AgendaScreen(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.authorizeAndFetch(context)
+        if (!viewModel.isAuthorized.value && viewModel.events.value.isEmpty()) {
+            (context as? Activity)?.let {
+                viewModel.authorizeAndFetch(it, silent = true)
+            }
+        }
     }
     
     var isCalendarView by remember { mutableStateOf(false) }
@@ -173,31 +180,104 @@ fun AgendaScreen(
                     )
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .border(1.dp, Color(0xFF333333), CircleShape)
-                        .background(Color.Transparent)
-                        .clickable { isCalendarView = !isCalendarView },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (isCalendarView) Icons.Rounded.ViewAgenda else Icons.Rounded.CalendarToday,
-                        contentDescription = "Toggle View",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, Color(0xFF333333), CircleShape)
+                            .background(Color.Transparent)
+                            .clickable {
+                                (context as? Activity)?.let {
+                                    viewModel.authorizeAndFetch(it, silent = false, forceRefresh = true)
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Sync,
+                            contentDescription = "Sync Google Calendar",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, Color(0xFF333333), CircleShape)
+                            .background(Color.Transparent)
+                            .clickable { isCalendarView = !isCalendarView },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isCalendarView) Icons.Rounded.ViewAgenda else Icons.Rounded.CalendarToday,
+                            contentDescription = "Toggle View",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
 
-            if (error != null && events.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(text = error ?: "Error", color = Color.Red, fontSize = 16.sp)
-                }
-            } else if (events.isEmpty() && !isLoading) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(text = "No events scheduled.", color = Color.Gray, fontSize = 16.sp)
+            if (events.isEmpty() && !isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color(0xFF1C1C1E))
+                            .padding(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Sync,
+                            contentDescription = null,
+                            tint = VioraNeonLime,
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = if (error != null) "Connection Issue" else "Connect Google Calendar",
+                            color = if (error != null) Color(0xFFFF5252) else Color.White,
+                            fontSize = 20.sp,
+                            fontFamily = SFProDisplayFontFamily,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = error ?: "Connect directly to your Google account to sync your schedule.",
+                            color = if (error != null) Color(0xFFFF8A80) else Color.White.copy(alpha = 0.7f),
+                            fontSize = 14.sp,
+                            fontFamily = SFProDisplayFontFamily,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Button(
+                            onClick = {
+                                (context as? Activity)?.let {
+                                    viewModel.authorizeAndFetch(it, silent = false)
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (error != null) Color(0xFFFF5252) else VioraNeonLime,
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.fillMaxWidth().height(50.dp)
+                        ) {
+                            Text(
+                                text = if (error != null) "Try Again" else "Connect Google Calendar",
+                                fontFamily = SFProDisplayFontFamily,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             } else if (events.isEmpty() && isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

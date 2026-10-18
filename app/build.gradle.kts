@@ -7,6 +7,7 @@ plugins {
   // alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.services)
+  alias(libs.plugins.crashlytics)
 }
 
 android {
@@ -14,7 +15,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.vioratask.jymrpd"
+    applicationId = "com.viora.task"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
@@ -107,6 +108,14 @@ dependencies {
   implementation(libs.coil.svg)
   
   // Vosk speech recognition
+  // Firebase SDKs
+  implementation(libs.firebase.analytics)
+  implementation(libs.firebase.crashlytics)
+  implementation(libs.firebase.config)
+  implementation(libs.firebase.messaging)
+  implementation(libs.play.review)
+  implementation(libs.rive.android)
+
   // removed
   // implementation(libs.firebase.ai)
   // Uncomment to use Firestore:

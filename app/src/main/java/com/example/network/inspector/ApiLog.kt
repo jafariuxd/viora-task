@@ -7,11 +7,11 @@ data class ApiLog(
     val url: String,
     val requestHeaders: Map<String, String>,
     val requestBody: String?,
-    var statusCode: Int? = null,
-    var statusMessage: String? = null,
-    var responseHeaders: Map<String, String>? = null,
-    var responseBody: String? = null,
-    var durationMs: Long? = null,
-    var error: String? = null,
-    var isPending: Boolean = true
+    val statusCode: Int? = null,
+    val statusMessage: String? = null,
+    val responseHeaders: Map<String, String>? = null,
+    val responseBody: String? = null,
+    val durationMs: Long? = null,
+    val error: String? = null,
+    val isPending: Boolean = true
 )

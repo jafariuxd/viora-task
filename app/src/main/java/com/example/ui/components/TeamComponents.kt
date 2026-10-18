@@ -41,13 +41,23 @@ fun CreateTeamBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         shape = com.example.ui.utils.dynamicBottomSheetShape(sheetState = sheetState, defaultRadius = 28.dp),
-        containerColor = Color(0xFF333333),
-        dragHandle = null
+        containerColor = Color(0xFF1C1C1E),
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(top = 12.dp, bottom = 8.dp)
+                    .width(36.dp)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.25f))
+            )
+        }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 32.dp)
+                .padding(horizontal = 24.dp)
+                .padding(top = 8.dp, bottom = 32.dp)
                 .navigationBarsPadding()
                 .imePadding()
         ) {
@@ -60,10 +70,10 @@ fun CreateTeamBottomSheet(
                 Text(
                     text = if (step == 1) title else "Team Default\nDeadline",
                     color = Color.White,
-                    fontSize = 34.sp,
+                    fontSize = 32.sp,
                     fontFamily = SFProDisplayFontFamily,
-                    fontWeight = FontWeight.Medium,
-                    lineHeight = 40.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 38.sp,
                     letterSpacing = (-0.5).sp
                 )
 
@@ -86,17 +96,17 @@ fun CreateTeamBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = if (step == 1) "By deleting this task, it will be permanently unavailable.\nIf you think you may need it later." else "Lists without deadlines use this deadline.",
+                text = if (step == 1) "Create a team to organize projects, lists, and collaborate with your members." else "Lists without deadlines use this deadline.",
                 color = Color(0xFFCCCCCC),
                 fontSize = 14.sp,
                 fontFamily = SFProDisplayFontFamily,
                 lineHeight = 20.sp
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
             if (step == 1) {
                 // Step 1: TextField

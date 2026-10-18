@@ -1,17 +1,21 @@
 package com.example.ui.screens
 
 import android.Manifest
-import android.util.Size
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.Image
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,14 +23,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -36,6 +51,7 @@ import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.model.viora.UserResponseDto
 import com.example.ui.theme.SFProDisplayFontFamily
+import com.example.ui.theme.VioraNeonLime
 import com.example.viewmodel.VioraTaskViewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -60,6 +76,10 @@ class QRCodeImageAnalyzer(
 
     fun resumeScanning() {
         isScanning = true
+    }
+
+    fun pauseScanning() {
+        isScanning = false
     }
 
     override fun analyze(imageProxy: ImageProxy) {
@@ -118,6 +138,8 @@ fun ScannerCameraOverlay(
     var selectedTeamId by remember { mutableStateOf(teams.firstOrNull()?.id ?: "") }
 
     val cameraPermissionState = rememberPermissionState(Manifest.permission.CAMERA)
+    var cameraInstance by remember { mutableStateOf<Camera?>(null) }
+    var isTorchEnabled by remember { mutableStateOf(false) }
 
     val analyzer = remember {
         QRCodeImageAnalyzer { rawResult ->
@@ -147,12 +169,16 @@ fun ScannerCameraOverlay(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
         if (cameraPermissionState.status.isGranted) {
-            // Camera Preview View
+            // 1. Camera Preview with CameraX
             AndroidView(
                 factory = { ctx ->
-                    val previewView = PreviewView(ctx)
+                    val previewView = PreviewView(ctx).apply {
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                    }
                     val executor = ContextCompat.getMainExecutor(ctx)
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
 
@@ -173,12 +199,13 @@ fun ScannerCameraOverlay(
 
                         try {
                             cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(
+                            val cam = cameraProvider.bindToLifecycle(
                                 lifecycleOwner,
                                 cameraSelector,
                                 preview,
                                 imageAnalysis
                             )
+                            cameraInstance = cam
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
@@ -188,92 +215,276 @@ fun ScannerCameraOverlay(
                 },
                 modifier = Modifier.fillMaxSize()
             )
-        } else {
-            // Permission missing info view
+
+            // 2. Scanning Laser Animation
+            val infiniteTransition = rememberInfiniteTransition(label = "scanner_laser")
+            val laserYRatio by infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 2000, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "laser_y"
+            )
+
+            // 3. Darkened Vignette Overlay with Cutout Mask
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                    }
+                    .drawWithContent {
+                        // Draw semi-transparent dark backdrop
+                        drawRect(Color.Black.copy(alpha = 0.65f))
+
+                        val scanBoxSizePx = 260.dp.toPx()
+                        val left = (size.width - scanBoxSizePx) / 2f
+                        val top = (size.height - scanBoxSizePx) / 2f - 40.dp.toPx()
+
+                        // Punch transparent hole for scanner viewport
+                        drawRoundRect(
+                            color = Color.Transparent,
+                            topLeft = Offset(left, top),
+                            size = Size(scanBoxSizePx, scanBoxSizePx),
+                            cornerRadius = CornerRadius(28.dp.toPx(), 28.dp.toPx()),
+                            blendMode = BlendMode.Clear
+                        )
+                    }
+            )
+
+            // 4. Scanner Viewport Frame & Laser Bar
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(32.dp),
+                    .padding(bottom = 60.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
+                Box(
+                    modifier = Modifier
+                        .size(260.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .border(3.dp, VioraNeonLime, RoundedCornerShape(28.dp))
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            // Tap scanner to test scan in emulator
+                            viewModel.fetchScannedUser("mock-user-id-123")
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Moving Neon Laser Bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(2.5.dp)
+                                .offset(y = 260.dp * laserYRatio)
+                                .background(
+                                    Brush.horizontalGradient(
+                                        colors = listOf(
+                                            Color.Transparent,
+                                            VioraNeonLime,
+                                            Color.White,
+                                            VioraNeonLime,
+                                            Color.Transparent
+                                        )
+                                    )
+                                )
+                        )
+                    }
+
+                    if (isLoading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.7f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(
+                                    color = VioraNeonLime,
+                                    strokeWidth = 3.dp,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Searching Profile...",
+                                    color = Color.White,
+                                    fontFamily = SFProDisplayFontFamily,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(28.dp))
+
+                // Instructional hints
                 Text(
-                    text = "Camera Permission Required",
+                    text = "Point camera at a Viora QR code",
                     color = Color.White,
                     fontFamily = SFProDisplayFontFamily,
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Scan to instantly recruit members to your Alliance",
+                    color = Color.White.copy(alpha = 0.5f),
+                    fontFamily = SFProDisplayFontFamily,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+        } else {
+            // Clean, Beautiful Permission Request View
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                // Icon Header Badge
+                Box(
+                    modifier = Modifier
+                        .size(88.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF1C1C1E))
+                        .border(1.5.dp, VioraNeonLime.copy(alpha = 0.5f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.QrCodeScanner,
+                        contentDescription = "Camera Scanner",
+                        tint = VioraNeonLime,
+                        modifier = Modifier.size(44.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(28.dp))
+
+                Text(
+                    text = "Camera Access Required",
+                    color = Color.White,
+                    fontFamily = SFProDisplayFontFamily,
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
+
                 Spacer(modifier = Modifier.height(12.dp))
+
                 Text(
-                    text = "Please grant camera permission to scan QR codes with your device.",
-                    color = Color.Gray,
+                    text = "Viora needs camera permission to scan QR codes and seamlessly recruit members to your team.",
+                    color = Color.White.copy(alpha = 0.6f),
                     fontFamily = SFProDisplayFontFamily,
                     fontSize = 14.sp,
+                    lineHeight = 20.sp,
                     textAlign = TextAlign.Center
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+
+                Spacer(modifier = Modifier.height(36.dp))
+
                 Button(
                     onClick = { cameraPermissionState.launchPermissionRequest() },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB4FF00)),
-                    shape = RoundedCornerShape(16.dp)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = VioraNeonLime,
+                        contentColor = Color.Black
+                    ),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .testTag("grant_camera_permission_btn")
                 ) {
-                    Text(text = "Grant Permission", color = Color.Black, fontWeight = FontWeight.Bold)
+                    Icon(
+                        imageVector = Icons.Rounded.CameraAlt,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Grant Permission",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = SFProDisplayFontFamily
+                    )
                 }
             }
         }
 
-        // Camera Framing View Overlay
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        // Top Navigation Bar (Back Button + Title + Torch Toggle)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
+            IconButton(
+                onClick = onNavigateBack,
                 modifier = Modifier
-                    .size(260.dp)
-                    .border(4.dp, Color(0xFFB4FF00), RoundedCornerShape(28.dp))
-                    .clickable {
-                        // Interactive tap to test scan directly if testing in emulator/mock
-                        viewModel.fetchScannedUser("mock-user-id-123")
-                    },
-                contentAlignment = Alignment.Center
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF1C1C1E).copy(alpha = 0.85f))
             ) {
-                Text(
-                    text = if (isLoading) "Loading profile..." else "Align QR Code",
-                    color = Color.White.copy(alpha = 0.8f),
-                    fontFamily = SFProDisplayFontFamily,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Close",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
                 )
             }
-            Spacer(modifier = Modifier.height(24.dp))
-            Text(
-                text = "Align QR code inside the frame to scan",
-                color = Color.White,
-                fontFamily = SFProDisplayFontFamily,
-                fontSize = 15.sp,
-                textAlign = TextAlign.Center
-            )
-            if (isLoading) {
-                Spacer(modifier = Modifier.height(16.dp))
-                CircularProgressIndicator(color = Color(0xFFB4FF00))
-            }
-        }
 
-        // Top Close Button
-        IconButton(
-            onClick = onNavigateBack,
-            modifier = Modifier
-                .padding(top = 48.dp, start = 16.dp)
-                .background(Color(0xFF1C1C1E).copy(alpha = 0.8f), CircleShape)
-        ) {
-            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+            Text(
+                text = "QR Scanner",
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = SFProDisplayFontFamily
+            )
+
+            if (cameraPermissionState.status.isGranted && cameraInstance?.cameraInfo?.hasFlashUnit() == true) {
+                IconButton(
+                    onClick = {
+                        isTorchEnabled = !isTorchEnabled
+                        cameraInstance?.cameraControl?.enableTorch(isTorchEnabled)
+                    },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isTorchEnabled) VioraNeonLime else Color(0xFF1C1C1E).copy(alpha = 0.85f)
+                        )
+                ) {
+                    Icon(
+                        imageVector = if (isTorchEnabled) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                        contentDescription = "Torch",
+                        tint = if (isTorchEnabled) Color.Black else Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.size(42.dp))
+            }
         }
     }
 
-    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // Scanned User Profile BottomSheet
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     if (showBottomSheet && scannedUser != null) {
         ModalBottomSheet(
             sheetState = sheetState,
@@ -283,7 +494,17 @@ fun ScannerCameraOverlay(
                 viewModel.clearScannedUser()
                 analyzer.resumeScanning()
             },
-            containerColor = Color(0xFF1C1C1E)
+            containerColor = Color(0xFF1C1C1E),
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                )
+            }
         ) {
             ScannedProfileContent(
                 user = scannedUser!!,
@@ -314,30 +535,32 @@ fun ScannedProfileContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(24.dp),
+            .padding(horizontal = 24.dp)
+            .padding(bottom = 32.dp, top = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Avatar
-        if (user.avatar != null) {
+        if (!user.avatar.isNullOrBlank()) {
             AsyncImage(
-                model = user.avatar,
+                model = com.example.util.ImageUtil.resolveAvatarUrl(user.avatar),
                 contentDescription = "Avatar",
                 modifier = Modifier
-                    .size(64.dp)
+                    .size(72.dp)
                     .clip(CircleShape)
+                    .border(2.dp, VioraNeonLime, CircleShape)
             )
         } else {
             Box(
                 modifier = Modifier
-                    .size(64.dp)
+                    .size(72.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFB4FF00)),
+                    .background(VioraNeonLime),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = user.fullName.take(1).uppercase(),
                     color = Color.Black,
-                    fontSize = 24.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = SFProDisplayFontFamily
                 )
@@ -355,58 +578,62 @@ fun ScannedProfileContent(
         )
         Text(
             text = "@${user.username}",
-            color = Color.Gray,
+            color = Color.White.copy(alpha = 0.5f),
             fontSize = 14.sp,
             fontFamily = SFProDisplayFontFamily
         )
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
         // Team Selection
         Text(
             text = "Select Alliance",
             color = Color.White,
-            fontSize = 16.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = SFProDisplayFontFamily,
             modifier = Modifier.align(Alignment.Start)
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
+                .padding(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             teams.forEach { team ->
                 val isSelected = team.id == selectedTeamId
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (isSelected) Color(0xFFB4FF00) else Color(0xFF2C2C2E))
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (isSelected) VioraNeonLime else Color(0xFF2C2C2E))
                         .clickable { onTeamSelected(team.id) }
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
                     Text(
                         text = team.name,
                         color = if (isSelected) Color.Black else Color.White,
                         fontFamily = SFProDisplayFontFamily,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        fontSize = 14.sp
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(28.dp))
 
         Button(
             onClick = onRecruit,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB4FF00)),
-            shape = RoundedCornerShape(24.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = VioraNeonLime,
+                contentColor = Color.Black
+            ),
+            shape = RoundedCornerShape(22.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(56.dp)
+                .height(54.dp)
         ) {
             Text(
                 text = "Recruit Member",
@@ -416,7 +643,6 @@ fun ScannedProfileContent(
                 fontFamily = SFProDisplayFontFamily
             )
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
     }
 }
+

@@ -2,10 +2,27 @@ package com.example.util
 
 import android.content.Context
 import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.FileOutputStream
 
 object ImageUtil {
+    const val BASE_BACKEND_URL = "http://45.195.250.77:3000"
+
+    fun resolveAvatarUrl(uriString: String?): String? {
+        if (uriString.isNullOrEmpty()) return null
+        if (uriString.startsWith("http://") || uriString.startsWith("https://")) return uriString
+        if (uriString.startsWith("/uploads/")) return "$BASE_BACKEND_URL$uriString"
+        if (uriString.startsWith("uploads/")) return "$BASE_BACKEND_URL/$uriString"
+        if (uriString.startsWith("data:image/") || uriString.startsWith("content://") || uriString.startsWith("file://")) return uriString
+        if (uriString.startsWith("/") && !File(uriString).exists()) return "$BASE_BACKEND_URL$uriString"
+        return uriString
+    }
+
     fun copyUriToInternalStorage(context: Context, uriString: String?): String? {
         if (uriString == null) return null
         if (uriString.startsWith("file://") || uriString.startsWith("/data/")) return uriString
@@ -93,6 +110,12 @@ object ImageUtil {
         if (uriString.startsWith("data:image/") || uriString.startsWith("http://") || uriString.startsWith("https://")) {
             return true
         }
+        if (uriString.startsWith("/uploads/") || uriString.startsWith("uploads/")) {
+            return true
+        }
+        if (uriString.startsWith("content://")) {
+            return true
+        }
         if (uriString.startsWith("file://")) {
             val path = Uri.parse(uriString).path ?: return false
             return File(path).exists()
@@ -105,29 +128,80 @@ object ImageUtil {
 
     fun toCoilModel(uriString: String?): Any? {
         if (uriString.isNullOrEmpty()) return null
-        if (uriString.startsWith("data:image/")) {
+        val resolved = resolveAvatarUrl(uriString) ?: return null
+        if (resolved.startsWith("data:image/")) {
             try {
-                val base64 = uriString.substringAfter("base64,")
+                val base64 = resolved.substringAfter("base64,")
                 return android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
             } catch (e: Exception) {
                 return null
             }
         }
-        return uriString
+        return resolved
     }
 
     fun toCoilRequest(context: Context, uriString: String?): Any? {
         if (uriString.isNullOrEmpty()) return null
-        if (uriString.startsWith("data:image/")) {
-            return toCoilModel(uriString)
+        val resolved = resolveAvatarUrl(uriString) ?: return null
+        if (resolved.startsWith("data:image/")) {
+            return toCoilModel(resolved)
         }
-        if (uriString.startsWith("http://") || uriString.startsWith("https://")) {
-            return coil.request.ImageRequest.Builder(context)
-                .data(uriString)
-                .decoderFactory(coil.decode.SvgDecoder.Factory())
-                .crossfade(true)
-                .build()
+        return coil.request.ImageRequest.Builder(context)
+            .data(resolved)
+            .decoderFactory(coil.decode.SvgDecoder.Factory())
+            .crossfade(true)
+            .build()
+    }
+
+    suspend fun uploadImageUri(context: Context, uri: Uri): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val uriString = uri.toString()
+            if (uriString.startsWith("http://") || uriString.startsWith("https://") || uriString.startsWith("/uploads/")) {
+                return@withContext Result.success(resolveAvatarUrl(uriString) ?: uriString)
+            }
+
+            val bytes: ByteArray
+            var mimeType = "image/jpeg"
+
+            if (uriString.startsWith("data:image/")) {
+                val base64Data = uriString.substringAfter("base64,")
+                bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                if (uriString.contains("image/png")) mimeType = "image/png"
+            } else {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                    ?: return@withContext Result.failure(Exception("Cannot open image file: $uri"))
+                bytes = inputStream.use { it.readBytes() }
+                mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            }
+
+            val extension = when {
+                mimeType.contains("png") -> "png"
+                mimeType.contains("webp") -> "webp"
+                else -> "jpg"
+            }
+            val filename = "avatar_${System.currentTimeMillis()}.$extension"
+            val mediaType = mimeType.toMediaTypeOrNull()
+            val requestBody = bytes.toRequestBody(mediaType)
+            val part = MultipartBody.Part.createFormData("file", filename, requestBody)
+
+            val response = com.example.network.viora.VioraNetworkModule.api.uploadFile(part)
+            if (response.success && response.data != null) {
+                val fullUrl = resolveAvatarUrl(response.data.url) ?: response.data.url
+                Result.success(fullUrl)
+            } else {
+                Result.failure(Exception(response.message.ifBlank { "Failed to upload avatar" }))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-        return uriString
+    }
+
+    suspend fun deleteUploadedFile(key: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val response = com.example.network.viora.VioraNetworkModule.api.deleteFile(key)
+            Result.success(response.success)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }

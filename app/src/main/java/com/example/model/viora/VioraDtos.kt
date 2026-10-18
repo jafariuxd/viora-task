@@ -5,9 +5,9 @@ import com.squareup.moshi.JsonClass
 @JsonClass(generateAdapter = true)
 data class GenericResponse<T>(
     val success: Boolean,
-    val message: String,
+    val message: String = "",
     val data: T?,
-    val timestamp: String
+    val timestamp: String = ""
 )
 
 @JsonClass(generateAdapter = true)
@@ -130,12 +130,12 @@ data class TeamResponseDto(
     val description: String? = null,
     val deadlineAt: String? = null,
     val remainingDays: Int? = null,
-    val ownerId: String,
-    val owner: TeamMemberDto,
+    val ownerId: String? = null,
+    val owner: TeamMemberDto? = null,
     val members: List<TeamMemberDto>? = null,
-    val isArchived: Boolean,
-    val createdAt: String,
-    val updatedAt: String
+    val isArchived: Boolean = false,
+    val createdAt: String? = null,
+    val updatedAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -145,6 +145,30 @@ data class TeamMemberDto(
     val username: String,
     val email: String,
     val avatar: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class UserSearchResultDto(
+    val id: String,
+    val fullName: String,
+    val username: String,
+    val email: String,
+    val avatar: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class UserSearchResponseDto(
+    val items: List<UserSearchResultDto> = emptyList(),
+    val total: Int = 0
+)
+
+@JsonClass(generateAdapter = true)
+data class TeamInviteResponseDto(
+    val id: String,
+    val teamId: String,
+    val teamName: String,
+    val invitedBy: TeamMemberDto? = null,
+    val createdAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -216,11 +240,11 @@ data class ListResponseDto(
     val teamId: String? = null,
     val team: ListTeamDto? = null,
     val users: List<ListMemberDto>? = null,
-    val tasksCount: Int,
-    val isArchived: Boolean,
-    val isPersonal: Boolean,
-    val createdAt: String,
-    val updatedAt: String
+    val tasksCount: Int = 0,
+    val isArchived: Boolean = false,
+    val isPersonal: Boolean = false,
+    val createdAt: String? = null,
+    val updatedAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -334,16 +358,16 @@ data class TaskResponseDto(
     val description: String? = null,
     val deadline: String? = null,
     val deadlineInfo: TaskDeadlineInfoDto? = null,
-    val status: String,
+    val status: String = "TODO",
     val listId: String? = null,
     val list: TaskListDto? = null,
     val team: TaskTeamDto? = null,
     val users: List<TaskUserDto>? = null,
     val tags: List<TaskTagDto>? = null,
     val subtasks: List<SubtaskDto>? = null,
-    val isArchived: Boolean,
-    val createdAt: String,
-    val updatedAt: String
+    val isArchived: Boolean = false,
+    val createdAt: String? = null,
+    val updatedAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -431,23 +455,23 @@ data class UpdateSubtaskStatusDto(
 // Sync
 @com.squareup.moshi.JsonClass(generateAdapter = true)
 data class SyncPullResponseDto(
-    val serverTimestamp: String,
-    val updatedData: SyncUpdatedDataDto,
-    val deletedIds: SyncDeletedIdsDto
+    val serverTimestamp: String? = null,
+    val updatedData: SyncUpdatedDataDto? = null,
+    val deletedIds: SyncDeletedIdsDto? = null
 )
 
 @com.squareup.moshi.JsonClass(generateAdapter = true)
 data class SyncUpdatedDataDto(
-    val tasks: List<TaskResponseDto>,
-    val lists: List<ListResponseDto>,
-    val teams: List<TeamResponseDto>
+    val tasks: List<TaskResponseDto> = emptyList(),
+    val lists: List<ListResponseDto> = emptyList(),
+    val teams: List<TeamResponseDto> = emptyList()
 )
 
 @com.squareup.moshi.JsonClass(generateAdapter = true)
 data class SyncDeletedIdsDto(
-    val tasks: List<String>,
-    val lists: List<String>,
-    val teams: List<String>
+    val tasks: List<String> = emptyList(),
+    val lists: List<String> = emptyList(),
+    val teams: List<String> = emptyList()
 )
 
 @com.squareup.moshi.JsonClass(generateAdapter = true)
@@ -510,4 +534,60 @@ data class SyncConflictDto(
     val id: String,
     val entity: String,
     val serverData: Map<String, Any>
+)
+
+@JsonClass(generateAdapter = true)
+data class FileUploadDataDto(
+    val key: String,
+    val url: String,
+    val originalName: String? = null,
+    val mimeType: String? = null,
+    val size: Long? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class FileDeleteDataDto(
+    val key: String
+)
+
+// --- Notification DTOs ---
+
+@JsonClass(generateAdapter = true)
+data class RegisterDeviceTokenDto(
+    val token: String,
+    val platform: String = "android"
+)
+
+@JsonClass(generateAdapter = true)
+data class UserNotificationResponseDto(
+    val id: String,
+    val type: String,
+    val label: String? = null,
+    val title: String,
+    val body: String,
+    val actionUrl: String? = null,
+    val data: Map<String, String>? = null,
+    val isRead: Boolean = false,
+    val readAt: String? = null,
+    val createdAt: String
+)
+
+@JsonClass(generateAdapter = true)
+data class PaginatedUserNotificationsResponseDto(
+    val items: List<UserNotificationResponseDto>,
+    val total: Int,
+    val page: Int,
+    val perPage: Int,
+    val totalPages: Int,
+    val unreadCount: Int
+)
+
+@JsonClass(generateAdapter = true)
+data class UnreadNotificationsCountResponseDto(
+    val unreadCount: Int
+)
+
+@JsonClass(generateAdapter = true)
+data class MarkAllNotificationsReadResponseDto(
+    val markedCount: Int
 )

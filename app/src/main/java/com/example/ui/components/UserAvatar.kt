@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.util.BoringAvatarUtil
 import com.example.util.ImageUtil
+import com.example.util.UserAvatarRegistry
 
 @Composable
 fun UserAvatar(
@@ -27,14 +28,28 @@ fun UserAvatar(
     size: Dp = 32.dp
 ) {
     val context = LocalContext.current
-    val avatarModel = remember(userId, avatarUri) {
-        val seed = when {
-            userId.isNotBlank() && userId != "User" -> userId
-            !avatarUri.isNullOrEmpty() -> avatarUri
-            else -> "user"
+    val effectiveUri = remember(userId, avatarUri) {
+        when {
+            !avatarUri.isNullOrEmpty() -> ImageUtil.resolveAvatarUrl(avatarUri)
+            userId.startsWith("http://") || userId.startsWith("https://") ||
+            userId.startsWith("/uploads/") || userId.startsWith("uploads/") ||
+            userId.startsWith("content://") || userId.startsWith("file://") ||
+            userId.startsWith("data:image/") -> ImageUtil.resolveAvatarUrl(userId)
+            else -> UserAvatarRegistry.getAvatarUrl(userId)
         }
-        val url = BoringAvatarUtil.getAvatarUrl(seed, "beam")
-        BoringAvatarUtil.getCoilRequest(context, url)
+    }
+
+    val avatarModel = remember(userId, effectiveUri) {
+        if (!effectiveUri.isNullOrEmpty()) {
+            ImageUtil.toCoilRequest(context, effectiveUri)
+        } else {
+            val seed = when {
+                userId.isNotBlank() && userId != "User" -> userId
+                else -> "user"
+            }
+            val url = BoringAvatarUtil.getAvatarUrl(seed, "beam")
+            BoringAvatarUtil.getCoilRequest(context, url)
+        }
     }
 
     Box(
@@ -51,4 +66,3 @@ fun UserAvatar(
         )
     }
 }
-

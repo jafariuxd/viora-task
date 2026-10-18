@@ -4,11 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,13 +13,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,22 +42,20 @@ fun ApiInspectorModalOverlay() {
     val isInspectorOpen by ApiInspectorManager.isInspectorOpen.collectAsState()
     val logs by ApiInspectorManager.logs.collectAsState()
 
-    val logToShow = currentLog ?: logs.firstOrNull() ?: ApiLog(
-        method = "INFO",
-        url = "viora://network-inspector/no-logs",
-        requestHeaders = emptyMap(),
-        requestBody = "No network requests have been logged yet.",
-        statusCode = 200,
-        statusMessage = "Ready",
-        responseBody = "Network requests will automatically be recorded when server operations are performed.",
-        isPending = false
-    )
+    val isOpen = isInspectorOpen || currentLog != null
 
-    AnimatedVisibility(
-        visible = isInspectorOpen || currentLog != null,
-        enter = fadeIn() + slideInVertically { it / 2 },
-        exit = fadeOut() + slideOutVertically { it / 2 }
-    ) {
+    if (isOpen) {
+        val logToShow = currentLog ?: logs.firstOrNull() ?: ApiLog(
+            method = "INFO",
+            url = "viora://network-inspector/no-logs",
+            requestHeaders = emptyMap(),
+            requestBody = "No network requests have been logged yet.",
+            statusCode = 200,
+            statusMessage = "Ready",
+            responseBody = "Network requests will automatically be recorded when server operations are performed.",
+            isPending = false
+        )
+
         ApiInspectorModal(
             log = logToShow,
             allLogs = logs,
@@ -75,7 +66,6 @@ fun ApiInspectorModalOverlay() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ApiInspectorModal(
     log: ApiLog,
@@ -84,8 +74,8 @@ fun ApiInspectorModal(
     onSelectLog: (ApiLog) -> Unit,
     onClearAll: () -> Unit
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: Request & Response, 1: History
-    var activeSubTab by remember { mutableIntStateOf(0) } // 0: Request, 1: Response
+    var selectedTab by remember(log.id) { mutableIntStateOf(0) } // 0: Request & Response, 1: History
+    var activeSubTab by remember(log.id) { mutableIntStateOf(0) } // 0: Request, 1: Response
     val context = LocalContext.current
 
     Dialog(
@@ -124,7 +114,7 @@ fun ApiInspectorModal(
                         MethodBadge(method = log.method)
 
                         Text(
-                            text = log.url.substringAfter("http://").substringAfter("https://").substringAfter("/"),
+                            text = getDisplayUrl(log.url),
                             color = Color.White,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
@@ -209,7 +199,7 @@ fun ApiInspectorModal(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            items(allLogs) { item ->
+                            items(allLogs, key = { it.id }) { item ->
                                 HistoryItemCard(
                                     log = item,
                                     isSelected = item.id == log.id,
@@ -361,14 +351,14 @@ fun ResponseDetailsView(log: ApiLog, context: Context) {
         } else if (log.error != null) {
             SectionCard(
                 title = "Network Error",
-                content = log.error ?: "Unknown error",
+                content = log.error,
                 isError = true,
                 context = context
             )
         } else {
             if (!log.responseHeaders.isNullOrEmpty()) {
-                val headersText = log.responseHeaders!!.entries.joinToString("\n") { "${it.key}: ${it.value}" }
-                SectionCard(title = "Response Headers (${log.responseHeaders!!.size})", content = headersText, context = context)
+                val headersText = log.responseHeaders.entries.joinToString("\n") { "${it.key}: ${it.value}" }
+                SectionCard(title = "Response Headers (${log.responseHeaders.size})", content = headersText, context = context)
             }
 
             SectionCard(
@@ -422,28 +412,30 @@ fun SectionCard(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        SelectionContainer {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF0D0D0E), RoundedCornerShape(8.dp))
-                    .padding(10.dp)
-            ) {
-                Text(
-                    text = content,
-                    color = if (isError) Color(0xFFFF8888) else Color(0xFFE5E5EA),
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    lineHeight = 18.sp
-                )
-            }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF0D0D0E), RoundedCornerShape(8.dp))
+                .clickable {
+                    copyToClipboard(context, title, content)
+                }
+                .padding(10.dp)
+        ) {
+            Text(
+                text = content,
+                color = if (isError) Color(0xFFFF8888) else Color(0xFFE5E5EA),
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 18.sp
+            )
         }
     }
 }
 
 @Composable
 fun MethodBadge(method: String) {
-    val bgColor = when (method.uppercase()) {
+    val upper = method.uppercase()
+    val bgColor = when (upper) {
         "GET" -> Color(0xFF34C759)
         "POST" -> Color(0xFF0A84FF)
         "PATCH" -> Color(0xFFFF9F0A)
@@ -458,7 +450,7 @@ fun MethodBadge(method: String) {
             .padding(horizontal = 8.dp, vertical = 3.dp)
     ) {
         Text(
-            text = method.uppercase(),
+            text = upper,
             color = bgColor,
             fontSize = 12.sp,
             fontWeight = FontWeight.ExtraBold
@@ -509,7 +501,7 @@ fun StatusBadge(log: ApiLog) {
                     .background(badgeColor, CircleShape)
             )
             Text(
-                text = "$code ${log.statusMessage ?: ""}",
+                text = "$code ${log.statusMessage ?: ""}".trim(),
                 color = badgeColor,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold
@@ -543,7 +535,7 @@ fun HistoryItemCard(
 
             Column {
                 Text(
-                    text = log.url.substringAfter("http://").substringAfter("https://").substringAfter("/"),
+                    text = getDisplayUrl(log.url),
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
@@ -560,9 +552,21 @@ fun HistoryItemCard(
     }
 }
 
+private fun getDisplayUrl(url: String): String {
+    return try {
+        val stripped = url.substringAfter("://")
+        if (stripped.contains("/")) stripped.substringAfter("/") else stripped
+    } catch (_: Exception) {
+        url
+    }
+}
+
 private fun copyToClipboard(context: Context, label: String, text: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = ClipData.newPlainText(label, text)
-    clipboard.setPrimaryClip(clip)
-    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+    try {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText(label, text)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+    } catch (_: Exception) {
+    }
 }

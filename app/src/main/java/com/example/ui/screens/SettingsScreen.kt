@@ -10,6 +10,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -38,6 +41,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.network.inspector.ApiInspectorManager
 import com.example.ui.theme.SFProDisplayFontFamily
 import com.example.ui.theme.VioraNeonLime
+import android.net.Uri
+import android.content.Intent
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Policy
+import androidx.compose.material.icons.filled.Description
+import com.example.firebase.VioraRemoteConfigManager
 import com.example.viewmodel.AgendaViewModel
 import com.example.viewmodel.VioraTaskViewModel
 
@@ -88,11 +97,7 @@ fun SettingsScreen(
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            agendaViewModel.handleAuthorizationResult(context, result.data)
-        } else {
-            agendaViewModel.setError("Google Sign-In failed or was canceled.")
-        }
+        agendaViewModel.handleAuthorizationResult(context, result.data, result.resultCode)
     }
 
     LaunchedEffect(authIntent) {
@@ -167,7 +172,9 @@ fun SettingsScreen(
         // Settings List
         Column(
             modifier = Modifier
+                .weight(1f)
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
         ) {
             Text(
@@ -236,6 +243,85 @@ fun SettingsScreen(
                     Icon(
                         imageVector = Icons.Default.ChevronRight,
                         contentDescription = "Manage",
+                        tint = Color.White.copy(alpha = 0.3f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Notifications Status & Settings Card
+            val isNotificationsEnabled = remember(context) {
+                androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+            }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        try {
+                            val intent = Intent().apply {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                    action = android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                                    putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                } else {
+                                    action = android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                                    data = Uri.fromParts("package", context.packageName, null)
+                                }
+                            }
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    },
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2E))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isNotificationsEnabled) VioraNeonLime.copy(alpha = 0.1f)
+                                    else Color.Red.copy(alpha = 0.15f)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = "Notifications",
+                                tint = if (isNotificationsEnabled) VioraNeonLime else Color(0xFFFF5252),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = "Push Notifications",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = SFProDisplayFontFamily
+                            )
+                            Text(
+                                text = if (isNotificationsEnabled) "Active (Channels configured)" else "Blocked in System Settings — Tap to allow",
+                                color = if (isNotificationsEnabled) VioraNeonLime else Color(0xFFFF5252),
+                                fontSize = 13.sp,
+                                fontFamily = SFProDisplayFontFamily
+                            )
+                        }
+                    }
+                    
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = "Manage Notifications",
                         tint = Color.White.copy(alpha = 0.3f)
                     )
                 }
@@ -580,82 +666,222 @@ fun SettingsScreen(
                     )
                 }
             }
+            
+            Spacer(modifier = Modifier.height(24.dp))
+
+            val remoteConfig by VioraRemoteConfigManager.configState.collectAsState()
+
+            Text(
+                text = "Support & Legal (Remote)",
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                fontFamily = SFProDisplayFontFamily,
+                modifier = Modifier.padding(bottom = 12.dp, start = 8.dp)
+            )
+
+            // Support Link
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(remoteConfig.supportUrl))
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            android.util.Log.e("SettingsScreen", "Failed to open support URL: ${e.message}")
+                        }
+                    },
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2E))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(VioraNeonLime.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.HelpOutline,
+                                contentDescription = null,
+                                tint = VioraNeonLime,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = "Contact Support",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = SFProDisplayFontFamily
+                            )
+                            Text(
+                                text = remoteConfig.supportUrl,
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                fontFamily = SFProDisplayFontFamily
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.3f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Privacy Policy Link
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(remoteConfig.privacyUrl))
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            android.util.Log.e("SettingsScreen", "Failed to open privacy URL: ${e.message}")
+                        }
+                    },
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2E))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Policy,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = "Privacy Policy",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = SFProDisplayFontFamily
+                            )
+                            Text(
+                                text = remoteConfig.privacyUrl,
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                fontFamily = SFProDisplayFontFamily
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.3f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Terms of Service Link
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(remoteConfig.termsUrl))
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            android.util.Log.e("SettingsScreen", "Failed to open terms URL: ${e.message}")
+                        }
+                    },
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2E))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Description,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = "Terms of Service",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = SFProDisplayFontFamily
+                            )
+                            Text(
+                                text = remoteConfig.termsUrl,
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                fontFamily = SFProDisplayFontFamily
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.3f)
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
 
-    if (showCityDialog) {
-        Dialog(onDismissRequest = { showCityDialog = false }) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 450.dp),
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2E))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp)
-                ) {
-                    Text(
-                        text = "Select City",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = SFProDisplayFontFamily,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-                    
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(Color.White.copy(alpha = 0.1f))
-                            .padding(bottom = 8.dp)
-                    )
-                    
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        items(presetCities) { city ->
-                            val isSelected = city.name == manualCityVal
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isSelected) VioraNeonLime.copy(alpha = 0.15f) else Color.Transparent)
-                                    .clickable {
-                                        taskViewModel.setWeatherSettings(false, city.name, city.latitude, city.longitude)
-                                        showCityDialog = false
-                                    }
-                                    .padding(vertical = 12.dp, horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = city.name,
-                                    color = if (isSelected) VioraNeonLime else Color.White,
-                                    fontSize = 16.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    fontFamily = SFProDisplayFontFamily
-                                )
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.LocationOn,
-                                        contentDescription = "Selected",
-                                        tint = VioraNeonLime,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    com.example.ui.components.WeatherCityBottomSheet(
+        visible = showCityDialog,
+        onDismiss = { showCityDialog = false },
+        taskViewModel = taskViewModel
+    )
 
     if (showDisconnectDialog) {
         AlertDialog(

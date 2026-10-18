@@ -24,12 +24,13 @@ data class Task(
     val deadlineSource: DeadlineSource = DeadlineSource.SPECIFIC,
     val status: TaskStatus = TaskStatus.TODO,
     val assigneePhotos: List<String> = emptyList(), // "sara", "mohammad", "other" to match generated avatars
+    val assigneesCount: Int = 0,
     val isUnplanned: Boolean = false,
     // New fields for detail screen
     val description: String = "",
     val tags: List<String> = emptyList(),
     val dueDateText: String = "", // e.g. "2025 Apr 11"
-    val folder: String = "Unplanned Tasks", // e.g. "Unplanned Tasks", "Charchoob"
+    val folder: String = "My Tasks", // e.g. "My Tasks", "Charchoob"
     val isArchived: Boolean = false
 )
 

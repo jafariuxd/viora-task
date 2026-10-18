@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import coil.compose.AsyncImage
 import com.example.ui.components.DefaultDeadlineSelector
@@ -89,6 +90,7 @@ fun EditProfileScreen(
     var defaultDeadline by remember { mutableStateOf(initialDeadline) }
     var customDays by remember { mutableStateOf(initialCustomDays) }
     var avatarUri by remember { mutableStateOf(initialAvatarUri) }
+    var isSaving by remember { mutableStateOf(false) }
 
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
@@ -102,7 +104,7 @@ fun EditProfileScreen(
     }
 
     val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
             avatarUri = com.example.util.ImageUtil.copyUriToInternalStorage(context, uri.toString())
@@ -141,44 +143,61 @@ fun EditProfileScreen(
             },
             actions = {
                 Button(
+                    enabled = !isSaving,
                     onClick = {
-                        val savedAvatar = com.example.util.ImageUtil.toSmallBase64(context, avatarUri)
-
-                        authPrefs.edit()
-                            .putBoolean("is_registered", true)
-                            .putString("user_name", fullName)
-                            .putString("user_username", username)
-                            .putString("user_email", email)
-                            .putString("user_avatar_uri", savedAvatar ?: avatarUri)
-                            .putString("user_default_deadline", defaultDeadline)
-                            .putInt("user_custom_days", customDays)
-                            .apply()
-
+                        isSaving = true
                         coroutineScope.launch {
+                            var finalAvatar = avatarUri
                             try {
+                                if (avatarUri != null && (avatarUri!!.startsWith("content://") || avatarUri!!.startsWith("file://") || avatarUri!!.startsWith("data:image/"))) {
+                                    val uploadRes = com.example.util.ImageUtil.uploadImageUri(context, Uri.parse(avatarUri))
+                                    uploadRes.onSuccess { remoteUrl ->
+                                        finalAvatar = com.example.util.ImageUtil.resolveAvatarUrl(remoteUrl) ?: remoteUrl
+                                    }
+                                }
+
+                                authPrefs.edit()
+                                    .putBoolean("is_registered", true)
+                                    .putString("user_name", fullName)
+                                    .putString("user_username", username)
+                                    .putString("user_email", email)
+                                    .putString("user_avatar_uri", finalAvatar)
+                                    .putString("user_default_deadline", defaultDeadline)
+                                    .putInt("user_custom_days", customDays)
+                                    .apply()
+
                                 val req = com.example.model.viora.UpdateUserDto(
                                     fullName = fullName.ifEmpty { null },
-                                    avatar = savedAvatar ?: avatarUri,
+                                    avatar = finalAvatar,
                                     days = customDays
                                 )
                                 com.example.network.viora.VioraNetworkModule.api.updateCurrentUser(req)
                             } catch (e: Exception) {
                                 e.printStackTrace()
+                            } finally {
+                                isSaving = false
+                                onSave()
                             }
                         }
-
-                        onSave()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = VioraNeonLime, contentColor = Color.Black),
                     shape = RoundedCornerShape(24.dp),
                     contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
                 ) {
-                    Text(
-                        text = "Save",
-                        fontSize = 16.sp,
-                        fontFamily = SFProDisplayFontFamily,
-                        fontWeight = FontWeight.Medium
-                    )
+                    if (isSaving) {
+                        CircularProgressIndicator(
+                            color = Color.Black,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    } else {
+                        Text(
+                            text = "Save",
+                            fontSize = 16.sp,
+                            fontFamily = SFProDisplayFontFamily,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
         )
@@ -186,6 +205,10 @@ fun EditProfileScreen(
         Spacer(modifier = Modifier.height(24.dp))
         
         // Avatar Preview
+        val pickPhotoAction = {
+            launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        }
+
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
@@ -195,13 +218,28 @@ fun EditProfileScreen(
                 modifier = Modifier
                     .size(120.dp)
                     .clip(CircleShape)
-                    .clickable { launcher.launch("image/*") }
+                    .clickable { pickPhotoAction() }
             ) {
                 com.example.ui.components.UserAvatar(
                     userId = username,
                     avatarUri = avatarUri,
                     size = 120.dp
                 )
+
+                if (isSaving) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = VioraNeonLime,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
             }
             
             Box(
@@ -210,7 +248,7 @@ fun EditProfileScreen(
                     .size(36.dp)
                     .clip(CircleShape)
                     .background(VioraNeonLime)
-                    .clickable { launcher.launch("image/*") },
+                    .clickable { pickPhotoAction() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

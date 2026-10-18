@@ -7,7 +7,7 @@ import okhttp3.Response
 import okio.Buffer
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.IOException
+import java.io.EOFException
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 
@@ -32,11 +32,11 @@ class ApiInspectorInterceptor : Interceptor {
         val response: Response
         try {
             response = chain.proceed(request)
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             val duration = System.currentTimeMillis() - startTime
             ApiInspectorManager.onNetworkError(
                 logId = apiLog.id,
-                errorMessage = e.message ?: "Network error / timeout",
+                errorMessage = e.message ?: e.javaClass.simpleName,
                 durationMs = duration
             )
             throw e
@@ -68,12 +68,39 @@ class ApiInspectorInterceptor : Interceptor {
 
     private fun getRequestBodyString(request: Request): String? {
         val body = request.body ?: return null
+
+        if (body.isOneShot()) {
+            return "(One-shot request body omitted)"
+        }
+        if (body.isDuplex()) {
+            return "(Duplex request body omitted)"
+        }
+
+        val mediaType = body.contentType()
+        if (mediaType != null) {
+            val type = mediaType.type.lowercase()
+            val subtype = mediaType.subtype.lowercase()
+            if (type == "multipart" || subtype.contains("octet-stream") || type == "image" || type == "video" || type == "audio") {
+                val length = try { body.contentLength() } catch (_: Exception) { -1L }
+                return "($type/$subtype binary/multipart data, ${if (length >= 0) "$length bytes" else "size unknown"})"
+            }
+        }
+
         return try {
             val buffer = Buffer()
             body.writeTo(buffer)
-            val contentType = body.contentType()
-            val charset: Charset = contentType?.charset(StandardCharsets.UTF_8) ?: StandardCharsets.UTF_8
-            buffer.readString(charset)
+
+            val maxBytes = 128 * 1024L // 128 KB max to prevent OOM
+            val byteCount = minOf(buffer.size, maxBytes)
+            val isTruncated = buffer.size > maxBytes
+
+            if (isPlaintext(buffer)) {
+                val charset: Charset = mediaType?.charset(StandardCharsets.UTF_8) ?: StandardCharsets.UTF_8
+                val content = buffer.readString(byteCount, charset)
+                if (isTruncated) "$content\n\n... (truncated, total body exceeds 128KB)" else content
+            } else {
+                "(Binary ${buffer.size}-byte request body omitted)"
+            }
         } catch (e: Exception) {
             "Unable to read request body: ${e.message}"
         }
@@ -81,20 +108,59 @@ class ApiInspectorInterceptor : Interceptor {
 
     private fun getResponseBodyString(response: Response): String? {
         val responseBody = response.body ?: return null
+        val mediaType = responseBody.contentType()
+
+        if (mediaType != null) {
+            val type = mediaType.type.lowercase()
+            val subtype = mediaType.subtype.lowercase()
+            if (subtype.contains("octet-stream") || type == "image" || type == "video" || type == "audio") {
+                return "($type/$subtype binary data omitted)"
+            }
+        }
+
         return try {
             val source = responseBody.source()
-            source.request(Long.MAX_VALUE) // Buffer whole body
+            val maxBytes = 128 * 1024L // 128 KB max
+            source.request(maxBytes)
             val buffer = source.buffer.clone()
-            val contentType = responseBody.contentType()
-            val charset: Charset = contentType?.charset(StandardCharsets.UTF_8) ?: StandardCharsets.UTF_8
-            buffer.readString(charset)
+
+            if (isPlaintext(buffer)) {
+                val byteCount = minOf(buffer.size, maxBytes)
+                val isTruncated = source.buffer.size > maxBytes || !source.exhausted()
+                val charset: Charset = mediaType?.charset(StandardCharsets.UTF_8) ?: StandardCharsets.UTF_8
+                val content = buffer.readString(byteCount, charset)
+                if (isTruncated) "$content\n\n... (truncated, total body exceeds 128KB)" else content
+            } else {
+                "(Binary ${buffer.size}-byte response body omitted)"
+            }
         } catch (e: Exception) {
             "Unable to read response body: ${e.message}"
         }
     }
 
+    private fun isPlaintext(buffer: Buffer): Boolean {
+        return try {
+            val prefix = Buffer()
+            val byteCount = minOf(buffer.size, 64L)
+            buffer.copyTo(prefix, 0, byteCount)
+            for (i in 0 until 16) {
+                if (prefix.exhausted()) break
+                val codePoint = prefix.readUtf8CodePoint()
+                if (Character.isISOControl(codePoint) && !Character.isWhitespace(codePoint)) {
+                    return false
+                }
+            }
+            true
+        } catch (_: EOFException) {
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun formatJsonIfPossible(rawString: String?): String? {
         if (rawString.isNullOrEmpty()) return rawString
+        if (rawString.length > 30_000) return rawString
         val trimmed = rawString.trim()
         return try {
             if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
@@ -104,7 +170,7 @@ class ApiInspectorInterceptor : Interceptor {
             } else {
                 rawString
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             rawString
         }
     }

@@ -17,6 +17,13 @@ object ErrorUtil {
                     val adapter = moshi.adapter<Map<String, Any>>(mapType)
                     val map = adapter.fromJson(errorBody)
                     val message = map?.get("message") as? String
+                    val errorObj = map?.get("error") as? Map<*, *>
+                    val details = errorObj?.get("details")
+                    if (details is List<*> && details.isNotEmpty()) {
+                        return details.filterNotNull().joinToString(", ")
+                    } else if (details is String && details.isNotBlank()) {
+                        return details
+                    }
                     if (message != null) {
                         return message
                     }

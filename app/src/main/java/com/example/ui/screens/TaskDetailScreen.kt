@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -93,7 +94,7 @@ fun computeTaskDeadlineLocal(
         source = com.example.model.DeadlineSource.USER
         
         val listObj = lists.find { it.id == task.listId || it.name == task.listId || it.name == task.folder }
-        val teamIdResolved = task.teamId ?: listObj?.teamId
+        val teamIdResolved = (task.teamId?.takeIf { it.isNotBlank() } ?: listObj?.teamId)?.takeIf { it.isNotBlank() }
         if (teamIdResolved != null && teamIdResolved.isNotEmpty()) {
             val teamDeadline = getTeamDefaultDeadline(teamIdResolved)
             if (teamDeadline != null) {
@@ -128,7 +129,15 @@ fun computeTaskDeadlineLocal(
     val dateFormat = SimpleDateFormat("yyyy MMM dd", Locale.getDefault())
     val dueDateText = if (task.dueDateText.isNotEmpty()) task.dueDateText else dateFormat.format(deadlineDate.time)
     
+    val listObj = lists.find { it.id == task.listId || it.name == task.listId || it.name == task.folder }
+    val resolvedTeam = (task.teamId?.takeIf { it.isNotBlank() } ?: listObj?.teamId)?.takeIf { it.isNotBlank() }
+    val resolvedListId = task.listId ?: listObj?.id
+    val resolvedFolder = if (task.folder.isNotBlank() && task.folder != "Unplanned Tasks") task.folder else (listObj?.name ?: "My Tasks")
+
     return task.copy(
+        teamId = resolvedTeam,
+        listId = resolvedListId,
+        folder = resolvedFolder,
         computedDeadlineMillis = deadlineDate.timeInMillis,
         daysLeft = daysLeft,
         dueDateText = dueDateText,
@@ -145,19 +154,41 @@ fun TaskDetailScreen(
     onTaskSaved: (Task) -> Unit,
     onTaskDeleted: (String) -> Unit,
     lists: List<com.example.model.TaskList> = emptyList(),
-    getTeamName: (String) -> String = { teamId -> if (teamId.isBlank()) "Personal" else "Personal" },
+    getTeamName: (String) -> String = { teamId -> if (teamId.isBlank() || teamId == "personal_space") "Personal Space" else "Personal Space" },
     getTeamDefaultDeadline: (String) -> Int? = { null },
     getUserDefaultDeadline: () -> Int = { 5 },
     getTeamMembers: (String?) -> List<String> = { emptyList() },
     getTeamMemberUsers: (String?) -> List<com.example.model.User> = { emptyList() },
     currentUsername: String = "User",
+    onFetchTaskDetails: (String) -> Unit = {},
     backHandlerEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    
+    DisposableEffect(Unit) {
+        onDispose {
+            focusManager.clearFocus()
+            keyboardController?.hide()
+        }
+    }
+    
     var isNewTask by remember(task.id) { mutableStateOf(task.title.isEmpty()) }
     var currentTask by remember(task.id) { mutableStateOf(computeTaskDeadlineLocal(task, lists, getTeamDefaultDeadline, getUserDefaultDeadline)) }
+    
+    LaunchedEffect(task.id) {
+        if (task.id.isNotBlank() && !isNewTask) {
+            onFetchTaskDetails(task.id)
+        }
+    }
+
+    LaunchedEffect(task.assigneePhotos) {
+        if (task.assigneePhotos != currentTask.assigneePhotos) {
+            currentTask = currentTask.copy(assigneePhotos = task.assigneePhotos)
+        }
+    }
     
     // Focus tracking for saving new task
     var titleFocused by remember(task.id) { mutableStateOf(false) }
@@ -192,13 +223,23 @@ fun TaskDetailScreen(
     var showDeleteConfirm by remember(task.id) { mutableStateOf(false) }
     var showFolderPicker by remember(task.id) { mutableStateOf(false) }
     var showAssigneePicker by remember(task.id) { mutableStateOf(false) }
+    var showInviteSheet by remember(task.id) { mutableStateOf(false) }
     var showTagInput by remember(task.id) { mutableStateOf(false) }
     var showDeadlineOptionsSheet by remember(task.id) { mutableStateOf(false) }
     var showCalendarPicker by remember(task.id) { mutableStateOf(false) }
     var showTimePickerSheet by remember(task.id) { mutableStateOf(false) }
     var pendingDateForTimePicker by remember(task.id) { mutableStateOf<Calendar?>(null) }
 
+    val isTaskInPersonalList = remember(currentTask, lists) {
+        val listObj = lists.find { it.id == currentTask.listId || it.name.equals(currentTask.folder, ignoreCase = true) }
+        listObj?.isPersonal == true ||
+        currentTask.client.equals("Personal", ignoreCase = true) ||
+        currentTask.client.equals("Personal Space", ignoreCase = true)
+    }
+
     val handleClose = {
+        focusManager.clearFocus()
+        keyboardController?.hide()
         if (currentTask.title.isNotBlank()) {
             onTaskSaved(currentTask)
         }
@@ -215,20 +256,13 @@ fun TaskDetailScreen(
         label = "taskDetailSpringBack"
     )
 
-    val hasSubDialog = showMoreMenu || showDeleteConfirm || showFolderPicker || showAssigneePicker || showTagInput || showDeadlineOptionsSheet || showCalendarPicker || showTimePickerSheet
+    val hasSubDialog = showMoreMenu || showDeleteConfirm || showFolderPicker || showAssigneePicker || showInviteSheet || showTagInput || showDeadlineOptionsSheet || showCalendarPicker || showTimePickerSheet
 
     // Temporary input states
     var newTagText by remember { mutableStateOf("") }
     
     // Animation state
     var showSuccessAnim by remember { mutableStateOf(false) }
-    
-    LaunchedEffect(showSuccessAnim) {
-        if (showSuccessAnim) {
-            kotlinx.coroutines.delay(1200)
-            showSuccessAnim = false
-        }
-    }
 
     LaunchedEffect(descriptionFocused) {
         if (descriptionFocused) {
@@ -274,6 +308,7 @@ fun TaskDetailScreen(
             else if (showDeleteConfirm) showDeleteConfirm = false
             else if (showFolderPicker) showFolderPicker = false
             else if (showAssigneePicker) showAssigneePicker = false
+            else if (showInviteSheet) showInviteSheet = false
             else if (showTagInput) showTagInput = false
             else if (showDeadlineOptionsSheet) showDeadlineOptionsSheet = false
             else if (showCalendarPicker) showCalendarPicker = false
@@ -283,6 +318,8 @@ fun TaskDetailScreen(
                 progressFlow.collect { backEvent ->
                     predictiveBackProgress = backEvent.progress * 0.75f
                 }
+                focusManager.clearFocus()
+                keyboardController?.hide()
                 handleClose()
             } catch (e: kotlin.coroutines.cancellation.CancellationException) {
                 predictiveBackProgress = 0f
@@ -368,16 +405,17 @@ fun TaskDetailScreen(
                                 tint = VioraNeonLime,
                                 modifier = Modifier.size(18.dp)
                             )
+                            val folderDisplay = if (currentTask.folder == "Unplanned Tasks" || currentTask.folder.isBlank()) "My Tasks" else currentTask.folder
                             Text(
-                                text = if (isNewTask && (currentTask.folder == "My Tasks" || currentTask.folder == "Unplanned Tasks")) "Unplanned Tasks" else currentTask.folder,
-                                color = if (isNewTask && (currentTask.folder == "My Tasks" || currentTask.folder == "Unplanned Tasks")) VioraNeonLime else Color.White,
+                                text = folderDisplay,
+                                color = if (isNewTask && folderDisplay == "My Tasks") VioraNeonLime else Color.White,
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Medium
                             )
                             Icon(
                                 imageVector = Icons.Rounded.ArrowDropDown,
                                 contentDescription = "Dropdown",
-                                tint = if (isNewTask && (currentTask.folder == "My Tasks" || currentTask.folder == "Unplanned Tasks")) VioraNeonLime else Color.White,
+                                tint = if (isNewTask && folderDisplay == "My Tasks") VioraNeonLime else Color.White,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -417,6 +455,46 @@ fun TaskDetailScreen(
                             modifier = Modifier
                                 .padding(top = 8.dp, bottom = 4.dp)
                         ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Rounded.Share,
+                                            contentDescription = null,
+                                            tint = Color.Black,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text(
+                                            "Share Link",
+                                            color = Color.Black,
+                                            fontFamily = SFProDisplayFontFamily,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            modifier = Modifier.width(132.dp)
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    val shareUrl = com.example.util.VioraDeepLinkHandler.createTaskUrl(
+                                        taskId = currentTask.id,
+                                        title = currentTask.title,
+                                        client = currentTask.client,
+                                        daysLeft = currentTask.daysLeft,
+                                        status = currentTask.status.name,
+                                        description = currentTask.description
+                                    )
+                                    val sendIntent = android.content.Intent().apply {
+                                        action = android.content.Intent.ACTION_SEND
+                                        putExtra(android.content.Intent.EXTRA_TEXT, "Check out this task on Viora:\n\"${currentTask.title}\"\n$shareUrl")
+                                        type = "text/plain"
+                                    }
+                                    val shareIntent = android.content.Intent.createChooser(sendIntent, "Share Task")
+                                    context.startActivity(shareIntent)
+                                },
+                                modifier = Modifier.height(44.dp),
+                                contentPadding = PaddingValues(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 10.dp)
+                            )
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -529,7 +607,6 @@ fun TaskDetailScreen(
                             focusManager.clearFocus()
                         } else {
                             updateTask(currentTask.copy(status = TaskStatus.TODO))
-                            if (!isNewTask) onStatusChange(TaskStatus.TODO)
                         }
                     },
                     modifier = Modifier.weight(1f)
@@ -542,7 +619,6 @@ fun TaskDetailScreen(
                             focusManager.clearFocus()
                         } else {
                             updateTask(currentTask.copy(status = TaskStatus.IN_PROGRESS))
-                            if (!isNewTask) onStatusChange(TaskStatus.IN_PROGRESS)
                         }
                     },
                     modifier = Modifier.weight(1f)
@@ -556,7 +632,6 @@ fun TaskDetailScreen(
                         } else {
                             val wasDone = currentTask.status == TaskStatus.DONE
                             updateTask(currentTask.copy(status = TaskStatus.DONE))
-                            if (!isNewTask) onStatusChange(TaskStatus.DONE)
                             if (!wasDone) showSuccessAnim = true
                         }
                     },
@@ -668,7 +743,9 @@ fun TaskDetailScreen(
                                 focusManager.clearFocus()
                             } else {
                                 focusManager.clearFocus()
-                                showAssigneePicker = true
+                                if (!isTaskInPersonalList) {
+                                    showAssigneePicker = true
+                                }
                             }
                         }
                 ) {
@@ -687,7 +764,35 @@ fun TaskDetailScreen(
                         
                         Spacer(modifier = Modifier.height(6.dp))
                         
-                        if (currentTask.assigneePhotos.isEmpty()) {
+                        if (isTaskInPersonalList) {
+                            Column {
+                                Text(
+                                    text = "Personal",
+                                    fontSize = 20.sp,
+                                    lineHeight = 24.sp,
+                                    fontFamily = SFProDisplayFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color.Black
+                                )
+                                Row(
+                                    modifier = Modifier.height(24.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Lock,
+                                        contentDescription = null,
+                                        tint = Color(0xFF5C7E10),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "Private to you",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color(0xFF5C7E10)
+                                    )
+                                }
+                            }
+                        } else if (currentTask.assigneePhotos.isEmpty()) {
                             Column {
                                 Text(
                                     text = "Not Assigned",
@@ -724,6 +829,7 @@ fun TaskDetailScreen(
                                 currentTask.assigneePhotos.take(2).forEach { photoName ->
                                     com.example.ui.components.UserAvatar(
                                         userId = photoName,
+                                        avatarUri = com.example.util.UserAvatarRegistry.getAvatarUrl(photoName),
                                         modifier = Modifier.border(2.dp, Color.White, CircleShape),
                                         size = 48.dp
                                     )
@@ -814,8 +920,7 @@ fun TaskDetailScreen(
                             }
                         )
                     } else {
-                        @OptIn(ExperimentalLayoutApi::class)
-                        FlowRow(
+                        VioraFlowRow(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
@@ -999,44 +1104,61 @@ fun TaskDetailScreen(
         )
     }
 
+    val activeTeamId = remember(currentTask.folder, currentTask.listId, currentTask.teamId, lists) {
+        val matchingList = lists.find { 
+            (currentTask.listId != null && it.id == currentTask.listId) || 
+            it.name.equals(currentTask.folder, ignoreCase = true) 
+        }
+        val teamIdFromList = matchingList?.teamId?.takeIf { it.isNotBlank() }
+        val teamId = teamIdFromList ?: currentTask.teamId?.takeIf { it.isNotBlank() }
+        teamId?.takeIf { it != "personal_space" }
+    }
+
+    val teamMembersForAssignment = remember(activeTeamId, getTeamMemberUsers) {
+        getTeamMemberUsers(activeTeamId)
+    }
+
     // Assignee Picker Dialog (global BottomSheet)
     com.example.ui.components.AssigneePickerBottomSheet(
         visible = showAssigneePicker,
         onDismiss = { showAssigneePicker = false },
         initialAssignees = currentTask.assigneePhotos,
-        allTeamMembers = getTeamMemberUsers(currentTask.teamId),
+        allTeamMembers = teamMembersForAssignment,
         currentUsername = currentUsername,
+        inviteUrl = "https://viora.group/invite?taskId=${currentTask.id}",
+        onInviteClick = {
+            showAssigneePicker = false
+            showInviteSheet = true
+        },
         onSubmit = { newAssignees ->
+            showAssigneePicker = false
             updateTask(currentTask.copy(assigneePhotos = newAssignees))
         }
     )
 
+    // Task Assignment Invite Bottom Sheet
+    com.example.ui.components.InviteBottomSheet(
+        visible = showInviteSheet,
+        onDismiss = { showInviteSheet = false },
+        inviteContext = com.example.ui.components.InviteContext.TaskAssignment(
+            taskTitle = currentTask.title.ifBlank { "Untitled Task" },
+            taskId = currentTask.id,
+            client = currentTask.client,
+            daysLeft = currentTask.daysLeft,
+            status = currentTask.status.name,
+            description = currentTask.description
+        )
+    )
+
     // Folder Picker Dialog (simplified)
 
-        // Success Overlay
+        // Rive Success Overlay
         if (showSuccessAnim) {
-            androidx.compose.ui.window.Dialog(onDismissRequest = {}) {
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showSuccessAnim,
-                    enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)) + androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(500, easing = androidx.compose.animation.core.FastOutSlowInEasing), initialScale = 0.5f),
-                    exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(300)) + androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(300), targetScale = 1.2f),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(120.dp)
-                            .background(VioraNeonLime.copy(alpha = 0.2f), CircleShape)
-                            .border(2.dp, VioraNeonLime, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Check,
-                            contentDescription = "Success",
-                            tint = VioraNeonLime,
-                            modifier = Modifier.size(64.dp)
-                        )
-                    }
-                }
-            }
+            com.example.ui.components.RiveTaskDoneDialog(
+                visible = showSuccessAnim,
+                onDismiss = { showSuccessAnim = false },
+                taskTitle = currentTask.title
+            )
         }
 
     if (showFolderPicker) {
@@ -1045,33 +1167,44 @@ fun TaskDetailScreen(
             sheetState = folderSheetState,
             shape = com.example.ui.utils.dynamicBottomSheetShape(sheetState = folderSheetState, defaultRadius = 28.dp),
             onDismissRequest = { showFolderPicker = false },
-            containerColor = Color(0xFF2A2A2A),
-            dragHandle = { BottomSheetDefaults.DragHandle(color = Color.Gray) }
+            containerColor = Color(0xFF1C1C1E),
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 12.dp, bottom = 8.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                )
+            }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .padding(horizontal = 24.dp)
+                    .padding(top = 4.dp, bottom = 24.dp)
             ) {
                 // Search bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Color(0xFF383838))
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(Color(0xFF2C2C2E))
+                        .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.Search, contentDescription = null, tint = Color.Gray)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Search lists/teams", color = Color.Gray)
+                    Icon(Icons.Rounded.Search, contentDescription = null, tint = Color(0xFF8E8E93), modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Search lists/teams", color = Color(0xFF8E8E93), fontSize = 16.sp, fontFamily = SFProDisplayFontFamily)
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
                 
-                val listsNames = remember(lists) { lists.map { it.name } }
-                if (listsNames.isEmpty()) {
+                val activeLists = remember(lists) { lists.filter { !it.isArchived } }
+                if (activeLists.isEmpty()) {
                     Text(
                         text = "No lists available. Please create a list under a team first.",
                         color = Color.Gray,
@@ -1079,16 +1212,23 @@ fun TaskDetailScreen(
                         fontFamily = SFProDisplayFontFamily
                     )
                 } else {
-                    listsNames.forEach { listName ->
+                    activeLists.forEach { listObj ->
+                        val isSelected = (currentTask.listId != null && currentTask.listId == listObj.id) || currentTask.folder == listObj.name
+                        val parentTeamName = if (listObj.teamId.isNotBlank() && listObj.teamId != "personal_space") {
+                            getTeamName(listObj.teamId)
+                        } else {
+                            "Personal Space"
+                        }
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    val parentList = lists.find { it.name == listName }
+                                    val newTeamId = listObj.teamId.takeIf { it.isNotBlank() } ?: "personal_space"
                                     updateTask(currentTask.copy(
-                                        folder = listName,
-                                        listId = parentList?.id ?: listName,
-                                        teamId = parentList?.teamId ?: currentTask.teamId
+                                        folder = listObj.name,
+                                        listId = listObj.id,
+                                        teamId = newTeamId
                                     ))
                                     showFolderPicker = false
                                 }
@@ -1097,21 +1237,37 @@ fun TaskDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                val isMyTasksList = listObj.name.equals("My Tasks", ignoreCase = true) || listObj.isPersonal
                                 Box(
                                     modifier = Modifier
                                         .size(48.dp)
                                         .clip(CircleShape)
-                                        .background(Color(0xFFFFD54F)), // arbitrary
+                                        .background(if (isMyTasksList) VioraNeonLime.copy(alpha = 0.15f) else Color(0xFF2C2C2E)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(listName.first().toString(), color = Color.Black, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                    if (isMyTasksList) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.PushPin,
+                                            contentDescription = "My Tasks Pinned",
+                                            tint = VioraNeonLime,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    } else {
+                                        Text(listObj.name.firstOrNull()?.toString() ?: "L", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
                                 Column {
-                                    Text(listName, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                                    val parentList = lists.find { it.name == listName }
-                                    val parentTeamName = parentList?.let { listObj ->
-                                        if (listObj.teamId.isNotBlank()) getTeamName(listObj.teamId) else "Personal"
-                                    } ?: "Personal"
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(listObj.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                                        if (isMyTasksList) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.PushPin,
+                                                contentDescription = "Pinned",
+                                                tint = VioraNeonLime,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
                                     Text(parentTeamName, color = Color.Gray, fontSize = 14.sp)
                                 }
                             }
@@ -1121,17 +1277,17 @@ fun TaskDetailScreen(
                                 modifier = Modifier
                                     .size(24.dp)
                                     .clip(CircleShape)
-                                    .border(2.dp, if (currentTask.folder == listName) VioraNeonLime else Color.Gray, CircleShape)
+                                    .border(2.dp, if (isSelected) VioraNeonLime else Color.Gray, CircleShape)
                                     .padding(4.dp)
                             ) {
-                                if (currentTask.folder == listName) {
+                                if (isSelected) {
                                     Box(modifier = Modifier.fillMaxSize().clip(CircleShape).background(VioraNeonLime))
                                 }
                             }
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
@@ -1143,10 +1299,24 @@ fun TaskDetailScreen(
             sheetState = deadlineSheetState,
             shape = com.example.ui.utils.dynamicBottomSheetShape(sheetState = deadlineSheetState, defaultRadius = 28.dp),
             onDismissRequest = { showDeadlineOptionsSheet = false },
-            containerColor = Color(0xFF383838),
-            dragHandle = null
+            containerColor = Color(0xFF1C1C1E),
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 12.dp, bottom = 8.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                )
+            }
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(bottom = 16.dp)
+            ) {
                 // Option: Today at ...
                 Row(
                     modifier = Modifier
@@ -1156,13 +1326,13 @@ fun TaskDetailScreen(
                             pendingDateForTimePicker = Calendar.getInstance()
                             showTimePickerSheet = true
                         }
-                        .padding(20.dp),
+                        .padding(horizontal = 24.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("0d", color = VioraNeonLime, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(52.dp))
-                    Text("Today at ...", color = Color.White, fontSize = 20.sp)
+                    Text("Today at ...", color = Color.White, fontSize = 18.sp, fontFamily = SFProDisplayFontFamily)
                 }
-                Divider(color = Color.White.copy(alpha = 0.1f))
+                Divider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(horizontal = 24.dp))
 
                 // Option: Tomorrow
                 Row(
@@ -1173,13 +1343,13 @@ fun TaskDetailScreen(
                             pendingDateForTimePicker = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
                             showTimePickerSheet = true
                         }
-                        .padding(20.dp),
+                        .padding(horizontal = 24.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("1d", color = VioraNeonLime, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(52.dp))
-                    Text("Tomorrow", color = Color.White, fontSize = 20.sp)
+                    Text("Tomorrow", color = Color.White, fontSize = 18.sp, fontFamily = SFProDisplayFontFamily)
                 }
-                Divider(color = Color.White.copy(alpha = 0.1f))
+                Divider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(horizontal = 24.dp))
 
                 // Direct options (2d, 1w, 2w)
                 val options = listOf(
@@ -1204,13 +1374,13 @@ fun TaskDetailScreen(
                                 updateTask(currentTask.copy(selectedDeadlineMillis = calendar.timeInMillis, dueDateText = formattedDate))
                                 showDeadlineOptionsSheet = false
                             }
-                            .padding(20.dp),
+                            .padding(horizontal = 24.dp, vertical = 18.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(badge, color = VioraNeonLime, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(52.dp))
-                        Text(text, color = Color.White, fontSize = 20.sp)
+                        Text(text, color = Color.White, fontSize = 18.sp, fontFamily = SFProDisplayFontFamily)
                     }
-                    Divider(color = Color.White.copy(alpha = 0.1f))
+                    Divider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(horizontal = 24.dp))
                 }
                 
                 // Choose date...
@@ -1221,14 +1391,14 @@ fun TaskDetailScreen(
                             showDeadlineOptionsSheet = false
                             showCalendarPicker = true
                         }
-                        .padding(20.dp),
+                        .padding(horizontal = 24.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(Icons.Rounded.CalendarToday, contentDescription = null, tint = VioraNeonLime, modifier = Modifier.size(20.dp))
                     Spacer(modifier = Modifier.width(20.dp))
-                    Text("Choose date...", color = Color.White, fontSize = 20.sp)
+                    Text("Choose date...", color = Color.White, fontSize = 18.sp, fontFamily = SFProDisplayFontFamily)
                 }
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
@@ -1301,13 +1471,24 @@ fun TaskDetailScreen(
             sheetState = skipTimeSheetState,
             shape = com.example.ui.utils.dynamicBottomSheetShape(sheetState = skipTimeSheetState, defaultRadius = 28.dp),
             onDismissRequest = performSkipTime,
-            containerColor = Color(0xFF242426),
-            dragHandle = null
+            containerColor = Color(0xFF1C1C1E),
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 12.dp, bottom = 8.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.25f))
+                )
+            }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    .navigationBarsPadding()
+                    .padding(horizontal = 24.dp)
+                    .padding(top = 4.dp, bottom = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 val isToday = pendingDateForTimePicker?.let {
@@ -1412,7 +1593,7 @@ fun TaskDetailScreen(
                         .imePadding()
                 ) {
                     if (currentTask.tags.isNotEmpty()) {
-                        FlowRow(
+                        VioraFlowRow(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 18.dp)
@@ -1713,6 +1894,62 @@ private fun WheelColumn(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+
+@Composable
+fun VioraFlowRow(
+    modifier: Modifier = Modifier,
+    horizontalArrangement: Arrangement.Horizontal = Arrangement.Start,
+    verticalArrangement: Arrangement.Vertical = Arrangement.Top,
+    content: @Composable () -> Unit
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val hSpacingPx = with(density) { 6.dp.roundToPx() }
+    val vSpacingPx = with(density) { 6.dp.roundToPx() }
+
+    androidx.compose.ui.layout.Layout(
+        modifier = modifier,
+        content = content
+    ) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(constraints) }
+        val rows = mutableListOf<List<androidx.compose.ui.layout.Placeable>>()
+        var currentRow = mutableListOf<androidx.compose.ui.layout.Placeable>()
+        var currentWidth = 0
+
+        for (placeable in placeables) {
+            if (currentRow.isNotEmpty() && currentWidth + placeable.width + hSpacingPx > constraints.maxWidth) {
+                rows.add(currentRow)
+                currentRow = mutableListOf()
+                currentWidth = 0
+            }
+            currentRow.add(placeable)
+            currentWidth += placeable.width + hSpacingPx
+        }
+        if (currentRow.isNotEmpty()) {
+            rows.add(currentRow)
+        }
+
+        var totalHeight = 0
+        rows.forEachIndexed { index, row ->
+            val rowHeight = row.maxOfOrNull { it.height } ?: 0
+            totalHeight += rowHeight + if (index > 0) vSpacingPx else 0
+        }
+
+        layout(constraints.maxWidth, totalHeight.coerceAtLeast(0)) {
+            var y = 0
+            rows.forEachIndexed { rowIndex, row ->
+                var x = 0
+                val rowHeight = row.maxOfOrNull { it.height } ?: 0
+                if (rowIndex > 0) y += vSpacingPx
+                for (placeable in row) {
+                    placeable.placeRelative(x, y)
+                    x += placeable.width + hSpacingPx
+                }
+                y += rowHeight
             }
         }
     }

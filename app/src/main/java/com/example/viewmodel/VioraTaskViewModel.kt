@@ -1,6 +1,8 @@
 package com.example.viewmodel
 import com.example.network.viora.VioraNetworkModule
 import com.example.model.viora.*
+import com.example.firebase.VioraAnalytics
+import com.example.firebase.VioraCrashlytics
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
@@ -15,12 +17,14 @@ import com.example.model.TaskStatus
 import com.example.model.WeatherInfo
 import com.example.model.User
 import com.example.model.Team
+import com.example.model.TeamRole
 import com.example.model.TaskList
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,6 +83,27 @@ class VioraTaskViewModel(application: Application) : AndroidViewModel(applicatio
         _navigateToBriefSignal.value = false
     }
 
+    // Deep Link Navigation Target Event (CMP-ready)
+    private val _deepLinkTarget = MutableStateFlow<com.example.util.VioraDeepLink?>(null)
+    val deepLinkTarget: StateFlow<com.example.util.VioraDeepLink?> = _deepLinkTarget.asStateFlow()
+
+    fun handleDeepLink(deepLink: com.example.util.VioraDeepLink) {
+        _deepLinkTarget.value = deepLink
+    }
+
+    fun consumeDeepLink() {
+        _deepLinkTarget.value = null
+    }
+
+    fun getTaskById(taskId: String): Task? {
+        val realId = idMapping[taskId] ?: taskId
+        return fullTaskPool.firstOrNull { it.id == realId || it.id == taskId }
+    }
+
+    fun getTeamById(teamId: String): Team? {
+        return mockTeams[teamId] ?: mockTeams.values.firstOrNull { it.name.equals(teamId, ignoreCase = true) }
+    }
+
     private val _userName = MutableStateFlow("User")
     val userName: StateFlow<String> = _userName.asStateFlow()
 
@@ -97,7 +122,7 @@ class VioraTaskViewModel(application: Application) : AndroidViewModel(applicatio
     val currentDate: StateFlow<String> = _currentDate.asStateFlow()
 
     // Teams state
-    private val _teams = MutableStateFlow(listOf("Personal"))
+    private val _teams = MutableStateFlow(listOf("Personal Space"))
     val teams: StateFlow<List<String>> = _teams.asStateFlow()
 
     private val _selectedTeam = MutableStateFlow("All Lists")
@@ -106,6 +131,12 @@ class VioraTaskViewModel(application: Application) : AndroidViewModel(applicatio
     private val _lists = MutableStateFlow<List<TaskList>>(emptyList())
     private val _activeLists = MutableStateFlow<List<TaskList>>(emptyList())
     val lists: StateFlow<List<TaskList>> = _activeLists.asStateFlow()
+
+    private val _personalListInfo = MutableStateFlow<PersonalListResponseDto?>(null)
+    val personalListInfo: StateFlow<PersonalListResponseDto?> = _personalListInfo.asStateFlow()
+
+    private val _personalListId = MutableStateFlow<String?>("personal_tasks")
+    val personalListId: StateFlow<String?> = _personalListId.asStateFlow()
 
     private val _archivedTeams = MutableStateFlow<List<Team>>(emptyList())
     val archivedTeams: StateFlow<List<Team>> = _archivedTeams.asStateFlow()
@@ -163,11 +194,149 @@ class VioraTaskViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // Team Invitations state
+    private val _pendingTeamInvitations = MutableStateFlow<List<TeamInviteResponseDto>>(emptyList())
+    val pendingTeamInvitations: StateFlow<List<TeamInviteResponseDto>> = _pendingTeamInvitations.asStateFlow()
+
+    private val _isInvitationsLoading = MutableStateFlow(false)
+    val isInvitationsLoading: StateFlow<Boolean> = _isInvitationsLoading.asStateFlow()
+
+    fun loadTeamInvitations() {
+        viewModelScope.launch {
+            _isInvitationsLoading.value = true
+            try {
+                val res = VioraNetworkModule.api.getTeamInvitations()
+                if (res.success && res.data != null) {
+                    _pendingTeamInvitations.value = res.data
+                }
+            } catch (e: Exception) {
+                // Non-fatal or offline
+            } finally {
+                _isInvitationsLoading.value = false
+            }
+        }
+    }
+
+    fun acceptTeamInvitation(inviteIdOrTeamId: String, onComplete: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch {
+            try {
+                var realInviteId = inviteIdOrTeamId
+                val pending = _pendingTeamInvitations.value.find { it.id == inviteIdOrTeamId || it.teamId == inviteIdOrTeamId }
+                if (pending != null) {
+                    realInviteId = pending.id
+                } else {
+                    val invRes = VioraNetworkModule.api.getTeamInvitations()
+                    if (invRes.success && invRes.data != null) {
+                        _pendingTeamInvitations.value = invRes.data
+                        val match = invRes.data.find { it.id == inviteIdOrTeamId || it.teamId == inviteIdOrTeamId }
+                        if (match != null) {
+                            realInviteId = match.id
+                        }
+                    }
+                }
+
+                val res = VioraNetworkModule.api.acceptTeamInvitation(realInviteId)
+                if (res.success) {
+                    showMessage("Joined team successfully")
+                    _pendingTeamInvitations.value = _pendingTeamInvitations.value.filter { it.id != realInviteId && it.teamId != realInviteId }
+                    loadState()
+                    onComplete?.invoke(true)
+                } else {
+                    showMessage(res.message, true)
+                    onComplete?.invoke(false)
+                }
+            } catch (e: Exception) {
+                showMessage(com.example.util.ErrorUtil.getErrorMessage(e), true)
+                onComplete?.invoke(false)
+            }
+        }
+    }
+
+    fun declineTeamInvitation(inviteIdOrTeamId: String, onComplete: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch {
+            try {
+                var realInviteId = inviteIdOrTeamId
+                val pending = _pendingTeamInvitations.value.find { it.id == inviteIdOrTeamId || it.teamId == inviteIdOrTeamId }
+                if (pending != null) {
+                    realInviteId = pending.id
+                } else {
+                    val invRes = VioraNetworkModule.api.getTeamInvitations()
+                    if (invRes.success && invRes.data != null) {
+                        _pendingTeamInvitations.value = invRes.data
+                        val match = invRes.data.find { it.id == inviteIdOrTeamId || it.teamId == inviteIdOrTeamId }
+                        if (match != null) {
+                            realInviteId = match.id
+                        }
+                    }
+                }
+
+                val res = VioraNetworkModule.api.declineTeamInvitation(realInviteId)
+                if (res.success) {
+                    showMessage("Invitation declined")
+                    _pendingTeamInvitations.value = _pendingTeamInvitations.value.filter { it.id != realInviteId && it.teamId != realInviteId }
+                    onComplete?.invoke(true)
+                } else {
+                    showMessage(res.message, true)
+                    onComplete?.invoke(false)
+                }
+            } catch (e: Exception) {
+                showMessage(com.example.util.ErrorUtil.getErrorMessage(e), true)
+                onComplete?.invoke(false)
+            }
+        }
+    }
+
+    suspend fun searchUsers(query: String): List<UserSearchResultDto> {
+        if (query.trim().length < 3) return emptyList()
+        return try {
+            val res = VioraNetworkModule.api.searchUsers(query = query.trim(), limit = 20)
+            if (res.success && res.data != null) {
+                res.data.items
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun inviteUserToTeam(teamName: String, username: String, onResult: ((Boolean, String?) -> Unit)? = null) {
+        viewModelScope.launch {
+            try {
+                val t = mockTeams.values.find { it.name == teamName }
+                if (t == null) {
+                    onResult?.invoke(false, "Team not found")
+                    return@launch
+                }
+                val cleanUser = username.removePrefix("@").trim()
+                val req = UpdateTeamDto(addUsernames = listOf(cleanUser))
+                val res = VioraNetworkModule.api.updateTeam(t.id, req)
+                if (res.success) {
+                    // Track username in team's pending invitations locally
+                    val updatedPending = (t.pendingInvitations + cleanUser).distinct()
+                    mockTeams[t.id] = t.copy(pendingInvitations = updatedPending)
+                    showMessage("Invitation sent to @$cleanUser")
+                    loadState()
+                    onResult?.invoke(true, null)
+                } else {
+                    showMessage(res.message, true)
+                    onResult?.invoke(false, res.message)
+                }
+            } catch(e: Exception) {
+                val msg = com.example.util.ErrorUtil.getErrorMessage(e)
+                showMessage(msg, true)
+                onResult?.invoke(false, msg)
+            }
+        }
+    }
+
     fun updateTeamMembers(teamName: String, addUsernames: List<String>? = null, removeUsernames: List<String>? = null) {
         viewModelScope.launch {
             try {
                 val t = mockTeams.values.find { it.name == teamName } ?: return@launch
-                val req = UpdateTeamDto(addUsernames = addUsernames, removeUsernames = removeUsernames)
+                val cleanAdd = addUsernames?.map { it.removePrefix("@").trim() }?.filter { it.isNotBlank() }?.ifEmpty { null }
+                val cleanRemove = removeUsernames?.map { it.removePrefix("@").trim() }?.filter { it.isNotBlank() }?.ifEmpty { null }
+                val req = UpdateTeamDto(addUsernames = cleanAdd, removeUsernames = cleanRemove)
                 val res = VioraNetworkModule.api.updateTeam(t.id, req)
                 if (res.success) {
                     showMessage("Team members updated")
@@ -177,6 +346,158 @@ class VioraTaskViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             } catch(e: Exception) {
                 showMessage(com.example.util.ErrorUtil.getErrorMessage(e), true)
+            }
+        }
+    }
+
+    fun getTeamRoleForUser(teamIdOrName: String, username: String): TeamRole {
+        val team = mockTeams[teamIdOrName] ?: mockTeams.values.find {
+            it.id.equals(teamIdOrName, ignoreCase = true) || it.name.equals(teamIdOrName, ignoreCase = true)
+        }
+        if (team == null) return TeamRole.MEMBER
+        return team.getMemberRole(username)
+    }
+
+    fun getCurrentUserRole(teamIdOrName: String): TeamRole {
+        val currentUser = getCurrentUser()
+        return getTeamRoleForUser(teamIdOrName, currentUser.username)
+    }
+
+    fun updateMemberRole(
+        teamName: String,
+        targetUsername: String,
+        newRole: TeamRole,
+        onResult: ((Boolean, String?) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            try {
+                val team = mockTeams.values.find { it.name.equals(teamName, ignoreCase = true) }
+                    ?: mockTeams[teamName]
+                if (team == null) {
+                    showMessage("Team not found", true)
+                    onResult?.invoke(false, "Team not found")
+                    return@launch
+                }
+
+                val currentUsername = getCurrentUser().username
+                val currentRole = team.getMemberRole(currentUsername)
+
+                // Permissions check: only Owner and Admin can manage roles
+                if (!currentRole.canManageMembers) {
+                    showMessage("Only Owners and Admins can manage roles", true)
+                    onResult?.invoke(false, "Insufficient permissions")
+                    return@launch
+                }
+
+                val targetCurrentRole = team.getMemberRole(targetUsername)
+
+                // Only Owner can transfer Ownership or promote to Owner
+                if (newRole == TeamRole.OWNER && currentRole != TeamRole.OWNER) {
+                    showMessage("Only the Team Owner can transfer ownership", true)
+                    onResult?.invoke(false, "Only Owner can transfer ownership")
+                    return@launch
+                }
+
+                // Admins cannot change an Owner's role
+                if (targetCurrentRole == TeamRole.OWNER && currentRole != TeamRole.OWNER) {
+                    showMessage("Cannot modify Owner's role", true)
+                    onResult?.invoke(false, "Cannot modify Owner's role")
+                    return@launch
+                }
+
+                // Admins cannot demote or modify other Admins
+                if (targetCurrentRole == TeamRole.ADMIN && currentRole == TeamRole.ADMIN && !currentUsername.equals(targetUsername, ignoreCase = true)) {
+                    showMessage("Only the Team Owner can modify Admin roles", true)
+                    onResult?.invoke(false, "Only Owner can modify Admin roles")
+                    return@launch
+                }
+
+                val teamRoles = teamMemberRoles.getOrPut(team.id) { mutableMapOf() }
+
+                // If transferring ownership, demote previous owner to Admin
+                var updatedOwnerId = team.ownerId
+                if (newRole == TeamRole.OWNER) {
+                    teamRoles[currentUsername] = TeamRole.ADMIN
+                    teamRoles[targetUsername] = TeamRole.OWNER
+                    val targetUser = team.members.find { it.username.equals(targetUsername, ignoreCase = true) }
+                    if (targetUser != null) {
+                        updatedOwnerId = targetUser.id
+                    }
+                } else {
+                    teamRoles[targetUsername] = newRole
+                }
+
+                val updatedTeam = team.copy(
+                    ownerId = updatedOwnerId,
+                    memberRoles = teamRoles.toMap()
+                )
+                mockTeams[team.id] = updatedTeam
+                _teamUpdateTrigger.value += 1
+                showMessage("Role updated: @$targetUsername is now a ${newRole.title}")
+                onResult?.invoke(true, null)
+            } catch (e: Exception) {
+                val msg = com.example.util.ErrorUtil.getErrorMessage(e)
+                showMessage(msg, true)
+                onResult?.invoke(false, msg)
+            }
+        }
+    }
+
+    fun removeMemberFromTeam(
+        teamName: String,
+        targetUsername: String,
+        onResult: ((Boolean, String?) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            try {
+                val team = mockTeams.values.find { it.name.equals(teamName, ignoreCase = true) }
+                    ?: mockTeams[teamName]
+                if (team == null) {
+                    showMessage("Team not found", true)
+                    onResult?.invoke(false, "Team not found")
+                    return@launch
+                }
+
+                val currentUsername = getCurrentUser().username
+                val currentRole = team.getMemberRole(currentUsername)
+
+                // Permissions check
+                if (!currentRole.canManageMembers) {
+                    showMessage("Only Owners and Admins can remove members", true)
+                    onResult?.invoke(false, "Insufficient permissions")
+                    return@launch
+                }
+
+                val targetRole = team.getMemberRole(targetUsername)
+                if (targetRole == TeamRole.OWNER) {
+                    showMessage("Cannot remove the Team Owner", true)
+                    onResult?.invoke(false, "Cannot remove Owner")
+                    return@launch
+                }
+
+                if (currentRole == TeamRole.ADMIN && targetRole == TeamRole.ADMIN) {
+                    showMessage("Admins cannot remove other Admins", true)
+                    onResult?.invoke(false, "Only Owner can remove Admins")
+                    return@launch
+                }
+
+                // Call backend update
+                updateTeamMembers(teamName = team.name, removeUsernames = listOf(targetUsername))
+
+                // Update local map & mockTeams
+                teamMemberRoles[team.id]?.remove(targetUsername)
+                val updatedMembers = team.members.filterNot { it.username.equals(targetUsername, ignoreCase = true) }
+                mockTeams[team.id] = team.copy(
+                    members = updatedMembers,
+                    memberRoles = (teamMemberRoles[team.id] ?: emptyMap()).toMap()
+                )
+                _teamUpdateTrigger.value += 1
+                showMessage("@$targetUsername removed from ${team.name}")
+                onResult?.invoke(true, null)
+            } catch (e: Exception) {
+                val msg = com.example.util.ErrorUtil.getErrorMessage(e)
+                showMessage(msg, true)
+                onResult?.invoke(false, msg)
             }
         }
     }
@@ -238,6 +559,10 @@ class VioraTaskViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             try {
                 val l = mockLists.values.find { it.name == listName } ?: return@launch
+                if (l.isPersonal || l.id == _personalListId.value || listName.equals("Personal", ignoreCase = true) || listName.equals("Personal Tasks", ignoreCase = true) || listName.equals("My Tasks", ignoreCase = true)) {
+                    showMessage("Personal list cannot be deleted", true)
+                    return@launch
+                }
                 val res = VioraNetworkModule.api.deleteList(l.id)
                 if (res.success) {
                     showMessage("List deleted")
@@ -250,50 +575,147 @@ class VioraTaskViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
-fun updateActiveAndArchivedStates() {
+
+    fun updatePersonalList(name: String, description: String? = null, onResult: ((Boolean, String?) -> Unit)? = null) {
+        viewModelScope.launch {
+            try {
+                val cleanName = name.trim().ifBlank { null }
+                val cleanDesc = description?.trim()
+                val req = UpdatePersonalListDto(name = cleanName, description = cleanDesc)
+                val res = VioraNetworkModule.api.updatePersonalList(req)
+                if (res.success && res.data != null) {
+                    val p = res.data
+                    _personalListInfo.value = p
+                    _personalListId.value = p.id
+                    mockLists[p.id] = TaskList(
+                        id = p.id,
+                        name = p.name,
+                        teamId = "personal_space",
+                        isPersonal = true,
+                        description = p.description,
+                        isArchived = p.isArchived
+                    )
+                    fullTaskPool.forEachIndexed { idx, task ->
+                        if (task.listId == p.id) {
+                            fullTaskPool[idx] = task.copy(folder = p.name)
+                        }
+                    }
+                    updateActiveAndArchivedStates()
+                    showMessage("Personal list updated")
+                    onResult?.invoke(true, null)
+                } else {
+                    showMessage(res.message, true)
+                    onResult?.invoke(false, res.message)
+                }
+            } catch (e: Exception) {
+                val msg = com.example.util.ErrorUtil.getErrorMessage(e)
+                showMessage(msg, true)
+                onResult?.invoke(false, msg)
+            }
+        }
+    }
+
+    fun updateList(listId: String, name: String, description: String? = null, onResult: ((Boolean, String?) -> Unit)? = null) {
+        if (listId == _personalListId.value || mockLists[listId]?.isPersonal == true) {
+            updatePersonalList(name, description, onResult)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val cleanName = name.trim().ifBlank { null }
+                val cleanDesc = description?.trim()
+                val req = UpdateListDto(name = cleanName, description = cleanDesc)
+                val res = VioraNetworkModule.api.updateList(listId, req)
+                if (res.success && res.data != null) {
+                    val updated = res.data.list
+                    mockLists[updated.id] = TaskList(
+                        id = updated.id,
+                        name = updated.name,
+                        teamId = updated.teamId ?: "personal_space",
+                        isArchived = updated.isArchived,
+                        description = updated.description
+                    )
+                    fullTaskPool.forEachIndexed { idx, task ->
+                        if (task.listId == updated.id) {
+                            fullTaskPool[idx] = task.copy(folder = updated.name)
+                        }
+                    }
+                    updateActiveAndArchivedStates()
+                    showMessage("List updated")
+                    onResult?.invoke(true, null)
+                } else {
+                    showMessage(res.message, true)
+                    onResult?.invoke(false, res.message)
+                }
+            } catch (e: Exception) {
+                val msg = com.example.util.ErrorUtil.getErrorMessage(e)
+                showMessage(msg, true)
+                onResult?.invoke(false, msg)
+            }
+        }
+    }
+
+    fun updateActiveAndArchivedStates() {
         // Ensure personal team entry exists
         if (!mockTeams.containsKey("personal_space")) {
             mockTeams["personal_space"] = Team(
                 id = "personal_space",
-                name = "Personal",
+                name = "Personal Space",
                 ownerId = "user1",
                 isArchived = false,
                 members = emptyList()
             )
+        } else {
+            val existing = mockTeams["personal_space"]
+            if (existing != null && existing.name != "Personal Space") {
+                mockTeams["personal_space"] = existing.copy(name = "Personal Space")
+            }
         }
 
-        // Ensure default sub-lists for Personal team exist
-        if (!mockLists.containsKey("unplanned_tasks")) {
-            mockLists["unplanned_tasks"] = TaskList(
-                id = "unplanned_tasks",
-                name = "Unplanned Tasks",
-                teamId = "personal_space",
-                isArchived = false
-            )
+        // Remove synthetic unplanned_tasks list so it doesn't appear in Personal Space
+        mockLists.remove("unplanned_tasks")
+
+        // If a real personal list exists, remove synthetic personal_tasks to avoid duplicates
+        if (_personalListId.value != null || mockLists.values.any { it.id != "personal_tasks" && (it.isPersonal || it.name == "My Tasks") }) {
+            mockLists.remove("personal_tasks")
         }
-        if (!mockLists.containsKey("personal_tasks") && mockLists.values.none { (it.teamId == "personal_space" || it.teamId.isEmpty()) && it.id != "unplanned_tasks" && !it.isArchived }) {
+
+        // Ensure default My Tasks list for Personal Space exists if none exists
+        if (!mockLists.containsKey("personal_tasks") && mockLists.values.none { (it.teamId == "personal_space" || it.teamId.isEmpty()) && it.isPersonal && !it.isArchived }) {
             mockLists["personal_tasks"] = TaskList(
                 id = "personal_tasks",
                 name = "My Tasks",
                 teamId = "personal_space",
+                isPersonal = true,
                 isArchived = false
             )
         }
 
         _lists.value = mockLists.values.toList()
 
-        // Update active lists
-        _activeLists.value = _lists.value.filter { list ->
-            !list.isArchived && (list.teamId.isEmpty() || list.teamId == "personal_space" || mockTeams[list.teamId] == null || mockTeams[list.teamId]?.isArchived != true)
+        // Update active lists - strictly pin Personal List (My Tasks) at index 0 of personal space lists!
+        // All lists without a team belong to Personal Space!
+        val rawActive = _lists.value.filter { list ->
+            !list.isArchived && list.id != "unplanned_tasks"
         }
+        val nonPersonalTeamIds = mockTeams.values.filter { !it.isArchived && it.id != "personal_space" && it.name != "Personal" && it.name != "Personal Space" && it.name != "All Lists" }.map { it.id }.toSet()
+
+        val personalPinned = rawActive.filter { it.isPersonal || it.id == _personalListId.value || it.name.equals("My Tasks", ignoreCase = true) }
+            .distinctBy { "My Tasks" }
+        val otherPersonal = rawActive.filter { 
+            it !in personalPinned && !it.name.equals("My Tasks", ignoreCase = true) && (it.teamId.isBlank() || it.teamId == "personal_space" || it.teamId !in nonPersonalTeamIds)
+        }
+        val teamLists = rawActive.filter { it !in personalPinned && it !in otherPersonal }
+
+        _activeLists.value = personalPinned + otherPersonal + teamLists
 
         // Update active teams based on mockTeams isArchived status
         val activeNames = mutableListOf<String>()
         if (_teams.value.contains("All Lists")) {
             activeNames.add("All Lists")
         }
-        if (!activeNames.contains("Personal")) {
-            activeNames.add("Personal")
+        if (!activeNames.contains("Personal Space")) {
+            activeNames.add("Personal Space")
         }
         mockTeams.values.sortedBy { it.name }.forEach { team ->
             if (!team.isArchived) {
@@ -351,6 +773,11 @@ fun updateActiveAndArchivedStates() {
     fun archiveList(listId: String) {
         viewModelScope.launch {
             try {
+                val l = mockLists[listId] ?: mockLists.values.find { it.id == listId }
+                if (l?.isPersonal == true || listId == _personalListId.value) {
+                    showMessage("Personal list cannot be archived", true)
+                    return@launch
+                }
                 val res = VioraNetworkModule.api.archiveList(listId)
                 if (res.success) {
                     showMessage("List archived")
@@ -389,16 +816,89 @@ fun updateActiveAndArchivedStates() {
         // No unarchive endpoint available for tasks based on JSON
         showMessage("Restoring tasks is not supported currently.", true)
     }
-fun getTeamMembers(teamId: String?): List<String> {
-        if (teamId == null) return emptyList()
-        val team = mockTeams[teamId] ?: return emptyList()
-        return team.members.map { it.username }
+    fun getCurrentUser(): com.example.model.User {
+        val authPrefs = getApplication<Application>().getSharedPreferences("viora_auth_prefs", Context.MODE_PRIVATE)
+        val myName = authPrefs.getString("user_name", _userName.value) ?: "User"
+        val myUsername = authPrefs.getString("user_username", _userHandle.value) ?: "user"
+        val myAvatar = com.example.util.ImageUtil.resolveAvatarUrl(authPrefs.getString("user_avatar_uri", _userAvatarUri.value))
+        val myId = authPrefs.getString("user_id", "me") ?: "me"
+
+        val currentUser = User(
+            id = myId,
+            name = myName,
+            username = myUsername,
+            defaultDeadlineDays = getUserDefaultDeadline(),
+            avatarUrl = myAvatar
+        )
+        com.example.util.UserAvatarRegistry.register(currentUser)
+        return currentUser
+    }
+
+    fun getAllKnownUsers(): List<com.example.model.User> {
+        val usersMap = mutableMapOf<String, com.example.model.User>()
+        val currentUser = getCurrentUser()
+        usersMap[currentUser.username.lowercase()] = currentUser
+
+        mockTeams.values.forEach { team ->
+            team.members.forEach { m ->
+                usersMap[m.username.lowercase()] = m
+                com.example.util.UserAvatarRegistry.register(m)
+            }
+        }
+        return usersMap.values.toList()
+    }
+
+    fun getTeamMembers(teamId: String?): List<String> {
+        return getTeamMemberUsers(teamId).map { it.username }
     }
 
     fun getTeamMemberUsers(teamId: String?): List<com.example.model.User> {
-        if (teamId == null) return emptyList()
-        val team = mockTeams[teamId] ?: return emptyList()
-        return team.members
+        val currentUser = getCurrentUser()
+        if (teamId == null || teamId.isBlank() || teamId == "personal_space") {
+            return listOf(currentUser)
+        }
+        // Look up by team ID or team name
+        val team = mockTeams[teamId] ?: mockTeams.values.find { 
+            it.id.equals(teamId, ignoreCase = true) || it.name.equals(teamId, ignoreCase = true) 
+        }
+        if (team == null) {
+            // Check if teamId might be a list ID or name
+            val list = mockLists[teamId] ?: mockLists.values.find { 
+                it.id.equals(teamId, ignoreCase = true) || it.name.equals(teamId, ignoreCase = true) 
+            }
+            if (list != null && list.teamId.isNotBlank() && list.teamId != "personal_space") {
+                val teamFromList = mockTeams[list.teamId] ?: mockTeams.values.find { 
+                    it.id.equals(list.teamId, ignoreCase = true) || it.name.equals(list.teamId, ignoreCase = true) 
+                }
+                if (teamFromList != null) {
+                    val members = teamFromList.members.toMutableList()
+                    members.forEach { com.example.util.UserAvatarRegistry.register(it) }
+                    if (teamFromList.ownerId == currentUser.id || teamFromList.ownerId == currentUser.username || teamFromList.ownerId == "user1") {
+                        if (members.none { it.id == currentUser.id || it.username.equals(currentUser.username, ignoreCase = true) }) {
+                            members.add(0, currentUser)
+                        }
+                    }
+                    return members
+                }
+            }
+            return listOf(currentUser)
+        }
+        val members = team.members.toMutableList()
+        members.forEach { com.example.util.UserAvatarRegistry.register(it) }
+        if (team.ownerId == currentUser.id || team.ownerId == currentUser.username || team.ownerId == "user1") {
+            if (members.none { it.id == currentUser.id || it.username.equals(currentUser.username, ignoreCase = true) }) {
+                members.add(0, currentUser)
+            }
+        }
+        return members
+    }
+
+    fun getTeamPendingInvitations(teamIdOrName: String?): List<String> {
+        if (teamIdOrName == null) return emptyList()
+        val team = mockTeams[teamIdOrName] ?: mockTeams.values.find {
+            it.id.equals(teamIdOrName, ignoreCase = true) || it.name.equals(teamIdOrName, ignoreCase = true)
+        }
+        return team?.pendingInvitations ?: emptyList()
     }
 
     fun getTeamIdByName(teamName: String): String? {
@@ -410,8 +910,8 @@ fun getTeamMembers(teamId: String?): List<String> {
     }
 
     fun getTeamNameById(teamId: String): String {
-        if (teamId.isBlank()) return "Personal"
-        return mockTeams[teamId]?.name ?: mockTeams.values.find { it.id == teamId || it.name == teamId }?.name ?: "Personal"
+        if (teamId.isBlank() || teamId == "personal_space") return "Personal Space"
+        return mockTeams[teamId]?.name ?: mockTeams.values.find { it.id == teamId || it.name == teamId }?.name ?: "Personal Space"
     }
 
     fun getTeamDefaultDeadline(teamIdOrName: String): Int? {
@@ -434,18 +934,9 @@ fun getTeamMembers(teamId: String?): List<String> {
         viewModelScope.launch {
             _isRefreshing.value = true
             fetchLocationAndWeather()
-            loadCurrentTasks()
-            updateNextTask()
-            updateCompletedCount()
+            loadState()
             delay(1000)
             _isRefreshing.value = false
-        }
-    }
-
-    init {
-        viewModelScope.launch {
-            kotlinx.coroutines.delay(1800)
-            _isDashboardLoading.value = false
         }
     }
 
@@ -516,6 +1007,9 @@ fun getTeamMembers(teamId: String?): List<String> {
     private val _completedCount = MutableStateFlow(0)
     val completedCount: StateFlow<Int> = _completedCount.asStateFlow()
 
+    private val _quickTasksCount = MutableStateFlow(0)
+    val quickTasksCount: StateFlow<Int> = _quickTasksCount.asStateFlow()
+
     // Full task pool of mock data (40 tasks)
     private val fullTaskPool = mutableListOf<Task>()
     private val idMapping = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -523,53 +1017,95 @@ fun getTeamMembers(teamId: String?): List<String> {
     // Mock entities for testing fallback logic
     private val mockUsers = mutableMapOf<String, User>()
     private val mockTeams = mutableMapOf<String, Team>()
+    private val teamMemberRoles = mutableMapOf<String, MutableMap<String, TeamRole>>()
+    private val _teamUpdateTrigger = MutableStateFlow(0)
+    val teamUpdateTrigger: StateFlow<Int> = _teamUpdateTrigger.asStateFlow()
     private val mockLists = mutableMapOf<String, TaskList>()
     private var weatherRefreshMinutes = 0
 
     init {
-        loadState()
-        updateActiveAndArchivedStates()
+        try {
+            loadFromLocalRoom()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            loadState()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            loadTeamInvitations()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            updateActiveAndArchivedStates()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         
-        val taskPrefs = getApplication<Application>().getSharedPreferences("viora_task_prefs", Context.MODE_PRIVATE)
-        if (taskPrefs.getBoolean("wizard_completed", false) || fullTaskPool.isNotEmpty()) {
-            _wizardCompleted.value = true
-            if (!taskPrefs.getBoolean("wizard_completed", false)) {
-                taskPrefs.edit().putBoolean("wizard_completed", true).apply()
+        try {
+            val taskPrefs = getApplication<Application>().getSharedPreferences("viora_task_prefs", Context.MODE_PRIVATE)
+            if (taskPrefs.getBoolean("wizard_completed", false) || fullTaskPool.isNotEmpty()) {
+                _wizardCompleted.value = true
+                if (!taskPrefs.getBoolean("wizard_completed", false)) {
+                    taskPrefs.edit().putBoolean("wizard_completed", true).apply()
+                }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
         
         // Load weather settings and cached weather info
-        val weatherPrefs = getApplication<Application>().getSharedPreferences("viora_weather_prefs", Context.MODE_PRIVATE)
-        _weatherAutoDetect.value = weatherPrefs.getBoolean("weather_auto_detect", true)
-        _manualCity.value = weatherPrefs.getString("weather_manual_city", "Tehran") ?: "Tehran"
-        _manualLatitude.value = weatherPrefs.getFloat("weather_manual_lat", 35.6944f).toDouble()
-        _manualLongitude.value = weatherPrefs.getFloat("weather_manual_lon", 51.4215f).toDouble()
+        try {
+            val weatherPrefs = getApplication<Application>().getSharedPreferences("viora_weather_prefs", Context.MODE_PRIVATE)
+            _weatherAutoDetect.value = weatherPrefs.getBoolean("weather_auto_detect", true)
+            _manualCity.value = weatherPrefs.getString("weather_manual_city", "Tehran") ?: "Tehran"
+            _manualLatitude.value = weatherPrefs.getFloat("weather_manual_lat", 35.6944f).toDouble()
+            _manualLongitude.value = weatherPrefs.getFloat("weather_manual_lon", 51.4215f).toDouble()
 
-        // Apply cached weather info if present
-        val cachedLoc = weatherPrefs.getString("cached_weather_location", "Tehran") ?: "Tehran"
-        val cachedTemp = weatherPrefs.getString("cached_weather_temp", "9°") ?: "9°"
-        val cachedCond = weatherPrefs.getString("cached_weather_condition", "Sunny") ?: "Sunny"
-        val cachedUv = weatherPrefs.getString("cached_weather_uv", "Low") ?: "Low"
-        _weatherInfo.value = _weatherInfo.value.copy(
-            location = cachedLoc,
-            temperature = cachedTemp,
-            condition = cachedCond,
-            uvIndex = cachedUv
-        )
+            // Apply cached weather info if present
+            val cachedLoc = weatherPrefs.getString("cached_weather_location", "Tehran") ?: "Tehran"
+            val cachedTemp = weatherPrefs.getString("cached_weather_temp", "9°") ?: "9°"
+            val cachedCond = weatherPrefs.getString("cached_weather_condition", "Sunny") ?: "Sunny"
+            val cachedUv = weatherPrefs.getString("cached_weather_uv", "Low") ?: "Low"
+            _weatherInfo.value = _weatherInfo.value.copy(
+                location = cachedLoc,
+                temperature = cachedTemp,
+                condition = cachedCond,
+                uvIndex = cachedUv
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
-        startClock()
-        startWeatherTimer()
-        loadUserInfo()
+        try {
+            startClock()
+            startWeatherTimer()
+            loadUserInfo()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
-            fetchLocationAndWeather()
+            try {
+                fetchLocationAndWeather()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
     fun loadUserInfo() {
         val authPrefs = getApplication<Application>().getSharedPreferences("viora_auth_prefs", Context.MODE_PRIVATE)
-        _userName.value = authPrefs.getString("user_name", "User") ?: "User"
-        _userHandle.value = authPrefs.getString("user_username", "user") ?: "user"
-        _userAvatarUri.value = authPrefs.getString("user_avatar_uri", null)
+        val name = authPrefs.getString("user_name", "User") ?: "User"
+        val username = authPrefs.getString("user_username", "user") ?: "user"
+        val avatar = com.example.util.ImageUtil.resolveAvatarUrl(authPrefs.getString("user_avatar_uri", null))
+        _userName.value = name
+        _userHandle.value = username
+        _userAvatarUri.value = avatar
+        com.example.util.UserAvatarRegistry.setCurrentUser(name, username, avatar)
     }
 
     fun getUserName(): String {
@@ -579,7 +1115,57 @@ fun getTeamMembers(teamId: String?): List<String> {
 
     fun getUserAvatarUri(): String? {
         val authPrefs = getApplication<Application>().getSharedPreferences("viora_auth_prefs", Context.MODE_PRIVATE)
-        return authPrefs.getString("user_avatar_uri", null)
+        return com.example.util.ImageUtil.resolveAvatarUrl(authPrefs.getString("user_avatar_uri", null))
+    }
+
+    private val dao by lazy {
+        com.example.data.AppDatabase.getDatabase(getApplication()).vioraDao()
+    }
+
+    private fun loadFromLocalRoom() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cachedTasks = dao.getAllTasksList()
+                if (cachedTasks.isNotEmpty() && fullTaskPool.isEmpty()) {
+                    val restored = cachedTasks.map { t ->
+                        val localStatus = when (t.status) {
+                            "in-progress" -> TaskStatus.IN_PROGRESS
+                            "done" -> TaskStatus.DONE
+                            else -> TaskStatus.TODO
+                        }
+                        var computedMillis: Long? = t.deadline
+                        var dueDateTextVal = ""
+                        if (computedMillis != null) {
+                            val outFormat = SimpleDateFormat("yyyy MMM dd", Locale.getDefault())
+                            dueDateTextVal = outFormat.format(java.util.Date(computedMillis))
+                        }
+                        Task(
+                            id = t.id,
+                            title = t.name,
+                            client = t.teamId ?: "Personal",
+                            listId = t.listId,
+                            teamId = t.teamId,
+                            status = localStatus,
+                            description = t.description ?: "",
+                            tags = if (t.tags.isNotEmpty()) t.tags.split(",") else emptyList(),
+                            daysLeft = 0,
+                            computedDeadlineMillis = computedMillis,
+                            dueDateText = dueDateTextVal,
+                            isArchived = t.isArchived,
+                            folder = "Personal"
+                        )
+                    }
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        if (fullTaskPool.isEmpty()) {
+                            fullTaskPool.addAll(restored)
+                            updateActiveAndArchivedStates()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     private fun saveState() {
@@ -610,6 +1196,37 @@ fun getTeamMembers(teamId: String?): List<String> {
         } catch (e: Exception) { e.printStackTrace() }
 
         editor.apply()
+
+        // Also persist tasks to local Room DB asynchronously
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val entities = fullTaskPool.map { task ->
+                    val statusStr = when (task.status) {
+                        TaskStatus.TODO -> "todo"
+                        TaskStatus.IN_PROGRESS -> "in-progress"
+                        TaskStatus.DONE -> "done"
+                    }
+                    com.example.data.entity.TaskEntity(
+                        id = task.id,
+                        name = task.title,
+                        description = task.description,
+                        status = statusStr,
+                        listId = task.listId,
+                        teamId = task.teamId,
+                        deadline = task.computedDeadlineMillis,
+                        tags = task.tags.joinToString(","),
+                        isArchived = task.isArchived,
+                        isDeleted = false,
+                        createdAt = task.createdAtMillis,
+                        updatedAt = System.currentTimeMillis(),
+                        syncStatus = com.example.data.entity.SyncStatus.SYNCED
+                    )
+                }
+                dao.insertTasks(entities)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     
@@ -635,7 +1252,8 @@ fun getTeamMembers(teamId: String?): List<String> {
     fun addScannedUserToTeam(teamId: String, username: String) {
         viewModelScope.launch {
             try {
-                val req = com.example.model.viora.UpdateTeamDto(addUsernames = listOf(username))
+                val cleanUser = username.removePrefix("@").trim()
+                val req = com.example.model.viora.UpdateTeamDto(addUsernames = listOf(cleanUser))
                 val res = com.example.network.viora.VioraNetworkModule.api.updateTeam(teamId, req)
                 if (res.success) {
                     showMessage("Member recruited successfully")
@@ -658,9 +1276,11 @@ fun getTeamMembers(teamId: String?): List<String> {
         loadUserInfo()
         val tm = VioraNetworkModule.getTokenManager()
         if (tm == null || tm.getAccessToken().isNullOrEmpty()) {
+            _isDashboardLoading.value = false
             return
         }
         viewModelScope.launch {
+            _isDashboardLoading.value = true
             try {
                 // Fetch user report
                 val reportRes = VioraNetworkModule.api.getCurrentUserReport()
@@ -686,15 +1306,53 @@ fun getTeamMembers(teamId: String?): List<String> {
                         members = emptyList()
                     )
                     teamsRes.data.items.forEach { t ->
+                        val membersList = mutableListOf<User>()
+                        t.owner?.let { o ->
+                            val ownerUser = User(
+                                id = o.id,
+                                name = o.fullName,
+                                username = o.username,
+                                defaultDeadlineDays = 0,
+                                avatarUrl = com.example.util.ImageUtil.resolveAvatarUrl(o.avatar)
+                            )
+                            membersList.add(ownerUser)
+                            com.example.util.UserAvatarRegistry.register(ownerUser)
+                        }
+                        t.members?.forEach { m ->
+                            val memberUser = User(
+                                id = m.id, 
+                                name = m.fullName, 
+                                username = m.username, 
+                                defaultDeadlineDays = 0,
+                                avatarUrl = com.example.util.ImageUtil.resolveAvatarUrl(m.avatar)
+                            )
+                            if (membersList.none { it.id == m.id || it.username == m.username }) {
+                                membersList.add(memberUser)
+                            }
+                            com.example.util.UserAvatarRegistry.register(memberUser)
+                        }
+
+                        val currentRoles = teamMemberRoles.getOrPut(t.id) { mutableMapOf() }
+                        val ownerUsername = t.owner?.username ?: membersList.firstOrNull { it.id == (t.ownerId ?: "") }?.username
+                        if (ownerUsername != null) {
+                            currentRoles[ownerUsername] = TeamRole.OWNER
+                        }
+                        membersList.forEach { m ->
+                            if (!currentRoles.containsKey(m.username)) {
+                                currentRoles[m.username] = if (m.id == t.ownerId || m.username == ownerUsername) TeamRole.OWNER else TeamRole.MEMBER
+                            }
+                        }
+
                         mockTeams[t.id] = Team(
                             id = t.id, 
                             name = t.name, 
-                            ownerId = t.ownerId, 
+                            ownerId = t.ownerId ?: (t.owner?.id ?: "user1"), 
                             isArchived = t.isArchived,
-                            members = t.members?.map { m -> User(id = m.id, name = m.fullName, username = m.username, defaultDeadlineDays = 0) } ?: emptyList()
+                            members = membersList,
+                            memberRoles = currentRoles.toMap()
                         )
                     }
-                    val activeTeamList = mutableListOf("Personal")
+                    val activeTeamList = mutableListOf("Personal Space")
                     mockTeams.values.filter { !it.isArchived && it.name != "Personal" && it.name != "Personal Space" }.map { it.name }.forEach { name ->
                         if (!activeTeamList.contains(name)) activeTeamList.add(name)
                     }
@@ -707,36 +1365,70 @@ fun getTeamMembers(teamId: String?): List<String> {
                 if (listsRes.success && listsRes.data != null) {
                     mockLists.clear()
                     listsRes.data.forEach { l ->
+                        val isRealTeam = !l.teamId.isNullOrBlank() && l.teamId != "personal_space" && mockTeams.containsKey(l.teamId)
+                        val matchingTeamByName = if (!isRealTeam && !l.teamName.isNullOrBlank() && l.teamName != "Unknown Team" && l.teamName != "Personal" && l.teamName != "Personal Space") {
+                            mockTeams.values.find { it.name.equals(l.teamName, ignoreCase = true) }?.id
+                        } else null
+
+                        val resolvedTeamId = when {
+                            isRealTeam -> l.teamId!!
+                            matchingTeamByName != null -> matchingTeamByName
+                            else -> "personal_space" // All lists without a team belong to Personal Space
+                        }
                         mockLists[l.id] = TaskList(
                             id = l.id, 
-                            name = l.name, 
-                            teamId = l.teamId ?: "", 
-                            isArchived = l.isArchived
-                            // members = l.members is not in ListSummaryDto, so we skip here
+                            name = if (l.name == "Personal" || l.name == "Unplanned Tasks") "My Tasks" else l.name, 
+                            teamId = resolvedTeamId, 
+                            isArchived = l.isArchived,
+                            isPersonal = l.isPersonal,
+                            description = l.description
                         )
                     }
-                    if (!mockLists.containsKey("unplanned_tasks")) {
-                        mockLists["unplanned_tasks"] = TaskList(
-                            id = "unplanned_tasks",
-                            name = "Unplanned Tasks",
-                            teamId = "personal_space",
-                            isArchived = false
-                        )
-                    }
-                    if (!mockLists.containsKey("personal_tasks") && mockLists.values.none { (it.teamId == "personal_space" || it.teamId.isEmpty()) && it.id != "unplanned_tasks" && !it.isArchived }) {
-                        mockLists["personal_tasks"] = TaskList(
-                            id = "personal_tasks",
-                            name = "My Tasks",
-                            teamId = "personal_space",
-                            isArchived = false
-                        )
-                    }
-                    _lists.value = mockLists.values.toList()
                 }
+
+                // Fetch Dedicated Personal List from Swagger
+                try {
+                    val personalRes = VioraNetworkModule.api.getPersonalList()
+                    if (personalRes.success && personalRes.data != null) {
+                        val p = personalRes.data
+                        _personalListInfo.value = p
+                        _personalListId.value = p.id
+                        val resolvedName = if (p.name.equals("Personal", ignoreCase = true) || p.name.isBlank()) "My Tasks" else p.name
+                        mockLists[p.id] = TaskList(
+                            id = p.id,
+                            name = resolvedName,
+                            teamId = "personal_space",
+                            isArchived = p.isArchived,
+                            isPersonal = true,
+                            description = p.description
+                        )
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                // Remove synthetic unplanned_tasks list so it doesn't appear in Personal Space
+                mockLists.remove("unplanned_tasks")
+
+                if (_personalListId.value != null || mockLists.values.any { it.id != "personal_tasks" && (it.isPersonal || it.name == "My Tasks") }) {
+                    mockLists.remove("personal_tasks")
+                }
+
+                if (!mockLists.containsKey("personal_tasks") && mockLists.values.none { (it.teamId == "personal_space" || it.teamId.isEmpty()) && it.isPersonal && !it.isArchived }) {
+                    mockLists["personal_tasks"] = TaskList(
+                        id = "personal_tasks",
+                        name = "My Tasks",
+                        teamId = "personal_space",
+                        isPersonal = true,
+                        isArchived = false
+                    )
+                }
+                _lists.value = mockLists.values.toList()
 
                 // Fetch Tasks
                 val tasksRes = VioraNetworkModule.api.getTasks()
                 if (tasksRes.success && tasksRes.data != null) {
+                    val prevAssigneeMap = fullTaskPool.associate { it.id to it.assigneePhotos }
                     fullTaskPool.clear()
                     tasksRes.data.forEach { t ->
                         val localStatus = when(t.status) {
@@ -765,10 +1457,11 @@ fun getTeamMembers(teamId: String?): List<String> {
                             e.printStackTrace()
                         }
                         
-                        fullTaskPool.add(Task(
+                        val cachedAssignees = prevAssigneeMap[t.id] ?: emptyList()
+                        val taskItem = Task(
                             id = t.id,
                             title = t.name,
-                            client = t.teamName ?: "Personal",
+                            client = if (t.teamName.isNullOrBlank() || t.teamName == "Personal") "Personal Space" else t.teamName,
                             listId = t.listId,
                             teamId = t.teamId,
                             status = localStatus,
@@ -778,15 +1471,48 @@ fun getTeamMembers(teamId: String?): List<String> {
                             computedDeadlineMillis = computedMillis,
                             dueDateText = dueDateTextVal,
                             isArchived = t.isArchived,
-                            folder = t.listName ?: "Unplanned Tasks"
-                        ))
+                            folder = when {
+                                t.listName != null && t.listName != "Unplanned Tasks" && t.listName != "Personal" -> t.listName
+                                else -> "My Tasks"
+                            },
+                            assigneePhotos = cachedAssignees,
+                            assigneesCount = t.assigneesCount
+                        )
+                        fullTaskPool.add(taskItem)
                     }
                 }
                 updateActiveAndArchivedStates()
             } catch (e: Exception) {
                 e.printStackTrace()
                 showMessage("Failed to load: ${com.example.util.ErrorUtil.getErrorMessage(e)}")
+            } finally {
+                _isDashboardLoading.value = false
             }
+        }
+    }
+
+    fun fetchTaskDetails(taskId: String) {
+        viewModelScope.launch {
+            try {
+                val realId = idMapping[taskId] ?: taskId
+                val res = VioraNetworkModule.api.getTask(realId)
+                if (res.success && res.data != null) {
+                    val taskData = res.data
+                    val usernames = mutableListOf<String>()
+                    taskData.users?.forEach { u ->
+                        val resolvedAvatar = com.example.util.ImageUtil.resolveAvatarUrl(u.avatar)
+                        com.example.util.UserAvatarRegistry.register(u.id, u.username, resolvedAvatar, u.fullName)
+                        usernames.add(u.username)
+                    }
+                    val index = fullTaskPool.indexOfFirst { it.id == realId || it.id == taskId }
+                    if (index != -1) {
+                        val existing = fullTaskPool[index]
+                        fullTaskPool[index] = existing.copy(assigneePhotos = usernames)
+                        loadCurrentTasks()
+                        updateActiveAndArchivedStates()
+                    }
+                }
+            } catch (_: Exception) {}
         }
     }
 private fun computeTaskDeadline(task: Task): Task {
@@ -916,30 +1642,59 @@ private fun computeTaskDeadline(task: Task): Task {
 
     
     fun updateTaskStatus(taskId: String, newStatus: TaskStatus) {
+        val realId = idMapping[taskId] ?: taskId
+        val statusStr = when(newStatus) {
+            TaskStatus.TODO -> "todo"
+            TaskStatus.IN_PROGRESS -> "in-progress"
+            TaskStatus.DONE -> "done"
+        }
+
+        // 1. Immediately update in-memory pool for fast UI response
+        val idx = fullTaskPool.indexOfFirst { it.id == realId || it.id == taskId }
+        if (idx != -1) {
+            fullTaskPool[idx] = fullTaskPool[idx].copy(status = newStatus)
+            loadCurrentTasks()
+            updateNextTask()
+            updateCompletedCount()
+            if (newStatus == TaskStatus.DONE) {
+                VioraAnalytics.logTaskCompleted(realId)
+                com.example.util.VioraInAppReviewManager.recordSignificantAction(getApplication())
+            }
+        }
+        saveState()
+
+        // 2. Immediately write to Room DB with PENDING_UPDATE status
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val existing = dao.getTaskById(realId)
+                if (existing != null) {
+                    dao.insertTask(existing.copy(
+                        status = statusStr,
+                        updatedAt = System.currentTimeMillis(),
+                        syncStatus = com.example.data.entity.SyncStatus.PENDING_UPDATE
+                    ))
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        // 3. Sync to API in background and trigger SyncManager if needed
         viewModelScope.launch {
             try {
-                val realId = idMapping[taskId] ?: taskId
-                val statusStr = when(newStatus) {
-                    TaskStatus.TODO -> "todo"
-                    TaskStatus.IN_PROGRESS -> "in-progress"
-                    TaskStatus.DONE -> "done"
-                }
                 val req = UpdateTaskDto(status = statusStr)
                 val res = VioraNetworkModule.api.updateTask(realId, req)
                 if (res.success) {
-                    // Update local pool immediately for UI speed
-                    val idx = fullTaskPool.indexOfFirst { it.id == realId || it.id == taskId }
-                    if (idx != -1) {
-                        fullTaskPool[idx] = fullTaskPool[idx].copy(status = newStatus)
-                        loadCurrentTasks()
-                        updateNextTask()
-                        updateCompletedCount()
+                    withContext(Dispatchers.IO) {
+                        dao.updateTaskSyncStatus(realId, com.example.data.entity.SyncStatus.SYNCED)
                     }
-                    // Sync fully
-                    loadState()
+                    updateCompletedCount()
+                    updateActiveAndArchivedStates()
+                } else {
+                    com.example.sync.SyncManager.triggerImmediateSync(getApplication())
                 }
             } catch(e: Exception) {
-                showMessage(com.example.util.ErrorUtil.getErrorMessage(e), true)
+                com.example.sync.SyncManager.triggerImmediateSync(getApplication())
             }
         }
     }
@@ -954,6 +1709,107 @@ private fun computeTaskDeadline(task: Task): Task {
             task.status == TaskStatus.DONE &&
             !task.isArchived &&
             (task.teamId == null || mockTeams[task.teamId]?.isArchived != true)
+        }
+        updateQuickTasksCount()
+    }
+
+    private fun updateQuickTasksCount() {
+        _quickTasksCount.value = fullTaskPool.count { task ->
+            task.tags.any { it.equals("Quick Task", ignoreCase = true) } &&
+            task.status != TaskStatus.DONE &&
+            !task.isArchived
+        }
+    }
+
+    fun createQuickTask(title: String) {
+        val cleanTitle = title.trim()
+        if (cleanTitle.isBlank()) return
+
+        markWizardCompleted()
+        viewModelScope.launch {
+            val localId = java.util.UUID.randomUUID().toString()
+            val personalId = _personalListId.value ?: "personal_tasks"
+            val deadlineDays = getUserDefaultDeadline()
+            val createdAt = System.currentTimeMillis()
+
+            val deadlineDate = java.util.Calendar.getInstance()
+            deadlineDate.timeInMillis = createdAt
+            deadlineDate.add(java.util.Calendar.DAY_OF_YEAR, deadlineDays)
+            deadlineDate.set(java.util.Calendar.HOUR_OF_DAY, 23)
+            deadlineDate.set(java.util.Calendar.MINUTE, 59)
+            deadlineDate.set(java.util.Calendar.SECOND, 59)
+            deadlineDate.set(java.util.Calendar.MILLISECOND, 999)
+
+            val newTask = Task(
+                id = localId,
+                title = cleanTitle,
+                client = "Personal Space",
+                folder = "My Tasks",
+                listId = personalId,
+                teamId = "personal_space",
+                status = TaskStatus.TODO,
+                dueDateText = "$deadlineDays days",
+                computedDeadlineMillis = deadlineDate.timeInMillis,
+                tags = listOf("Quick Task"),
+                createdAtMillis = createdAt,
+                userId = "user1"
+            )
+
+            // 1. Instantly update in-memory pool
+            fullTaskPool.add(0, newTask)
+            loadCurrentTasks()
+            updateNextTask()
+            updateCompletedCount()
+            saveState()
+
+            // 2. Persist to local Room DB
+            withContext(Dispatchers.IO) {
+                try {
+                    val entity = com.example.data.entity.TaskEntity(
+                        id = newTask.id,
+                        name = newTask.title,
+                        description = "",
+                        status = "todo",
+                        listId = newTask.listId,
+                        teamId = newTask.teamId,
+                        deadline = newTask.computedDeadlineMillis,
+                        tags = "Quick Task",
+                        isArchived = false,
+                        isDeleted = false,
+                        createdAt = newTask.createdAtMillis,
+                        updatedAt = System.currentTimeMillis(),
+                        syncStatus = com.example.data.entity.SyncStatus.PENDING_CREATE
+                    )
+                    dao.insertTask(entity)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            // 3. Network Sync
+            try {
+                pendingTaskCreations.add(localId)
+                val req = com.example.model.viora.CreateTaskDto(
+                    name = cleanTitle,
+                    listId = personalId,
+                    deadlineDays = deadlineDays,
+                    tags = listOf("Quick Task")
+                )
+                val res = VioraNetworkModule.api.createTask(req)
+                if (res.success && res.data != null) {
+                    val serverId = res.data.task.id
+                    idMapping[localId] = serverId
+                    val idx = fullTaskPool.indexOfFirst { it.id == localId }
+                    if (idx != -1) {
+                        fullTaskPool[idx] = fullTaskPool[idx].copy(id = serverId)
+                    }
+                    saveState()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                pendingTaskCreations.remove(localId)
+            }
         }
     }
 
@@ -970,31 +1826,86 @@ private fun computeTaskDeadline(task: Task): Task {
                 }
 
                 val isExisting = fullTaskPool.any { it.id == realId } || idMapping.containsKey(realId)
-                val taskToSave = task.copy(id = realId)
+                val prevAssignees = fullTaskPool.find { it.id == realId }?.assigneePhotos ?: emptyList()
+
+                // If existing task was customized or edited, remove "Quick Task" tag so it leaves the triage queue
+                val cleanedTags = if (isExisting && task.tags.any { it.equals("Quick Task", ignoreCase = true) }) {
+                    task.tags.filterNot { it.equals("Quick Task", ignoreCase = true) }
+                } else {
+                    task.tags
+                }
+
+                val taskToSave = task.copy(id = realId, tags = cleanedTags)
+
+                // 1. Instantly update in-memory pool
+                val existingIdx = fullTaskPool.indexOfFirst { it.id == realId }
+                if (existingIdx != -1) {
+                    fullTaskPool[existingIdx] = taskToSave
+                } else {
+                    fullTaskPool.add(0, taskToSave)
+                }
+                loadCurrentTasks()
+                updateNextTask()
+                updateCompletedCount()
+                saveState()
+
+                // 2. Instantly persist to local Room DB
+                val statusStr = when(taskToSave.status) {
+                    TaskStatus.TODO -> "todo"
+                    TaskStatus.IN_PROGRESS -> "in-progress"
+                    TaskStatus.DONE -> "done"
+                }
+                withContext(Dispatchers.IO) {
+                    try {
+                        val entity = com.example.data.entity.TaskEntity(
+                            id = taskToSave.id,
+                            name = taskToSave.title,
+                            description = taskToSave.description,
+                            status = statusStr,
+                            listId = taskToSave.listId,
+                            teamId = taskToSave.teamId,
+                            deadline = taskToSave.computedDeadlineMillis,
+                            tags = taskToSave.tags.joinToString(","),
+                            isArchived = taskToSave.isArchived,
+                            isDeleted = false,
+                            createdAt = taskToSave.createdAtMillis,
+                            updatedAt = System.currentTimeMillis(),
+                            syncStatus = if (isExisting) com.example.data.entity.SyncStatus.PENDING_UPDATE else com.example.data.entity.SyncStatus.PENDING_CREATE
+                        )
+                        dao.insertTask(entity)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
 
                 var listId = mockLists.values.find { it.name == taskToSave.folder || it.id == taskToSave.listId }?.id
                 if (listId == "unplanned_tasks" || listId == "personal_tasks" || listId == null) {
-                    var team = mockTeams.values.find { (it.name == "Personal" || it.name == "Personal Space") && it.id != "personal_space" }
-                    if (team == null) {
-                        val tReq = CreateTeamDto(name = "Personal Space", deadlineDays = 5)
-                        val tRes = VioraNetworkModule.api.createTeam(tReq)
-                        if (tRes.success && tRes.data != null) {
-                            team = Team(id = tRes.data.id, name = tRes.data.name, ownerId = tRes.data.ownerId, isArchived = false)
-                            mockTeams[tRes.data.id] = team
+                    val actualPersonalId = _personalListId.value ?: mockLists.values.find { it.isPersonal }?.id
+                    if (actualPersonalId != null && actualPersonalId != "personal_tasks") {
+                        listId = actualPersonalId
+                    } else {
+                        var team = mockTeams.values.find { (it.name == "Personal" || it.name == "Personal Space") && it.id != "personal_space" }
+                        if (team == null) {
+                            val tReq = CreateTeamDto(name = "Personal Space", deadlineDays = 5)
+                            val tRes = VioraNetworkModule.api.createTeam(tReq)
+                            if (tRes.success && tRes.data != null) {
+                                team = Team(id = tRes.data.id, name = tRes.data.name, ownerId = tRes.data.ownerId ?: "user1", isArchived = false)
+                                mockTeams[tRes.data.id] = team
+                            }
                         }
-                    }
-                    
-                    val listName = if (taskToSave.folder.isNotEmpty() && taskToSave.folder != "Unplanned Tasks" && taskToSave.folder != "My Tasks" && taskToSave.folder != "unplanned_tasks" && taskToSave.folder != "personal_tasks") taskToSave.folder else "My Tasks"
-                    var list = mockLists.values.find { it.name == listName && it.teamId == team?.id && it.id != "unplanned_tasks" && it.id != "personal_tasks" }
-                    if (list == null && team != null) {
-                        val lReq = CreateListDto(name = listName, teamId = team.id, deadlineDays = 5)
-                        val lRes = VioraNetworkModule.api.createList(lReq)
-                        if (lRes.success && lRes.data != null) {
-                            list = TaskList(id = lRes.data.list.id, name = lRes.data.list.name, teamId = team.id, isArchived = false)
-                            mockLists[lRes.data.list.id] = list
+                        
+                        val listName = if (taskToSave.folder.isNotEmpty() && taskToSave.folder != "Unplanned Tasks" && taskToSave.folder != "My Tasks" && taskToSave.folder != "unplanned_tasks" && taskToSave.folder != "personal_tasks") taskToSave.folder else "My Tasks"
+                        var list = mockLists.values.find { it.name == listName && it.teamId == team?.id && it.id != "unplanned_tasks" && it.id != "personal_tasks" }
+                        if (list == null && team != null) {
+                            val lReq = CreateListDto(name = listName, teamId = team.id, deadlineDays = 5)
+                            val lRes = VioraNetworkModule.api.createList(lReq)
+                            if (lRes.success && lRes.data != null) {
+                                list = TaskList(id = lRes.data.list.id, name = lRes.data.list.name, teamId = team.id, isArchived = false, isPersonal = true)
+                                mockLists[lRes.data.list.id] = list
+                            }
                         }
+                        listId = list?.id ?: actualPersonalId
                     }
-                    listId = list?.id
                 }
                 val calculatedDeadlineDays = taskToSave.computedDeadlineMillis?.let {
                     val current = Calendar.getInstance().apply {
@@ -1007,11 +1918,10 @@ private fun computeTaskDeadline(task: Task): Task {
                     ((target.timeInMillis - current.timeInMillis) / (1000 * 60 * 60 * 24)).toInt()
                 }
 
-                val statusStr = when(taskToSave.status) {
-                    TaskStatus.TODO -> "todo"
-                    TaskStatus.IN_PROGRESS -> "in-progress"
-                    TaskStatus.DONE -> "done"
-                }
+                val deadlineDaysForApi = calculatedDeadlineDays?.let { if (it < 1) 1 else it }
+                val isUuid = listId?.matches(Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")) == true
+                val validListId = if (isUuid) listId else null
+                val cleanAssignees = taskToSave.assigneePhotos.map { it.removePrefix("@").trim() }.filter { it.isNotBlank() }
 
                 if (!isExisting) {
                     pendingTaskCreations.add(task.id)
@@ -1019,22 +1929,58 @@ private fun computeTaskDeadline(task: Task): Task {
                         val req = CreateTaskDto(
                             name = taskToSave.title,
                             description = taskToSave.description.ifEmpty { null },
-                            deadlineDays = calculatedDeadlineDays,
-                            listId = listId,
+                            deadlineDays = deadlineDaysForApi,
+                            listId = validListId,
                             tags = taskToSave.tags.ifEmpty { null },
                             status = statusStr,
-                            usernames = taskToSave.assigneePhotos.ifEmpty { null }
+                            usernames = cleanAssignees.ifEmpty { null }
                         )
                         val res = VioraNetworkModule.api.createTask(req)
                         if (res.success && res.data != null) {
+                            res.data.task.users?.forEach { u ->
+                                val resolvedAvatar = com.example.util.ImageUtil.resolveAvatarUrl(u.avatar)
+                                com.example.util.UserAvatarRegistry.register(u.id, u.username, resolvedAvatar, u.fullName)
+                            }
                             val serverId = res.data.task.id
+                            val serverUsers = res.data.task.users?.map { it.username } ?: cleanAssignees
                             idMapping[task.id] = serverId
                             idMapping[serverId] = serverId
+                            val existingIndex = fullTaskPool.indexOfFirst { it.id == serverId || it.id == task.id }
+                            if (existingIndex != -1) {
+                                fullTaskPool[existingIndex] = fullTaskPool[existingIndex].copy(id = serverId, assigneePhotos = serverUsers)
+                            }
+                            withContext(Dispatchers.IO) {
+                                dao.hardDeleteTask(task.id)
+                                dao.insertTask(com.example.data.entity.TaskEntity(
+                                    id = serverId,
+                                    name = taskToSave.title,
+                                    description = taskToSave.description,
+                                    status = statusStr,
+                                    listId = validListId,
+                                    teamId = taskToSave.teamId,
+                                    deadline = taskToSave.computedDeadlineMillis,
+                                    tags = taskToSave.tags.joinToString(","),
+                                    isArchived = taskToSave.isArchived,
+                                    isDeleted = false,
+                                    createdAt = taskToSave.createdAtMillis,
+                                    updatedAt = System.currentTimeMillis(),
+                                    syncStatus = com.example.data.entity.SyncStatus.SYNCED
+                                ))
+                            }
                             showMessage("Task added")
+                            VioraAnalytics.logTaskCreated(
+                                taskId = serverId,
+                                hasDueDate = taskToSave.computedDeadlineMillis != null,
+                                hasAssignee = serverUsers.isNotEmpty(),
+                                category = taskToSave.folder
+                            )
+                            loadCurrentTasks()
                             loadState()
                         } else {
-                            showMessage(res.message ?: "Failed to add task", true)
+                            com.example.sync.SyncManager.triggerImmediateSync(getApplication())
                         }
+                    } catch (e: Exception) {
+                        com.example.sync.SyncManager.triggerImmediateSync(getApplication())
                     } finally {
                         pendingTaskCreations.remove(task.id)
                     }
@@ -1042,43 +1988,78 @@ private fun computeTaskDeadline(task: Task): Task {
                 }
 
                 // Existing task update
+                val cleanCurrent = taskToSave.assigneePhotos.map { it.removePrefix("@").trim() }.filter { it.isNotBlank() }
+                val cleanPrev = prevAssignees.map { it.removePrefix("@").trim() }.filter { it.isNotBlank() }
+                val usernamesToAdd = cleanCurrent.filter { it !in cleanPrev }.ifEmpty { null }
+                val usernamesToRemove = cleanPrev.filter { it !in cleanCurrent }.ifEmpty { null }
+
                 val req = UpdateTaskDto(
                     name = taskToSave.title,
                     description = taskToSave.description,
-                    deadlineDays = calculatedDeadlineDays,
+                    deadlineDays = deadlineDaysForApi,
                     status = statusStr,
-                    listId = listId,
-                    tagsToAdd = taskToSave.tags
+                    listId = validListId,
+                    tagsToAdd = taskToSave.tags.ifEmpty { null },
+                    usernamesToAdd = usernamesToAdd,
+                    usernamesToRemove = usernamesToRemove
                 )
                 val res = VioraNetworkModule.api.updateTask(taskToSave.id, req)
                 if (res.success) {
+                    val serverUsers = res.data?.task?.users?.map { it.username } ?: cleanCurrent
+                    res.data?.task?.users?.forEach { u ->
+                        val resolvedAvatar = com.example.util.ImageUtil.resolveAvatarUrl(u.avatar)
+                        com.example.util.UserAvatarRegistry.register(u.id, u.username, resolvedAvatar, u.fullName)
+                    }
+                    val existingIndex = fullTaskPool.indexOfFirst { it.id == taskToSave.id }
+                    if (existingIndex != -1) {
+                        fullTaskPool[existingIndex] = fullTaskPool[existingIndex].copy(assigneePhotos = serverUsers)
+                    }
+                    loadCurrentTasks()
+                    withContext(Dispatchers.IO) {
+                        dao.updateTaskSyncStatus(taskToSave.id, com.example.data.entity.SyncStatus.SYNCED)
+                    }
                     showMessage("Task updated")
-                    loadState()
+                    updateCompletedCount()
+                    updateActiveAndArchivedStates()
                 } else {
-                    showMessage(res.message ?: "Failed to update task", true)
+                    com.example.sync.SyncManager.triggerImmediateSync(getApplication())
                 }
             } catch(e: Exception) {
                 e.printStackTrace()
-                showMessage("Error saving task: ${com.example.util.ErrorUtil.getErrorMessage(e)}", true)
+                com.example.sync.SyncManager.triggerImmediateSync(getApplication())
             }
         }
     }
 
     fun deleteTask(taskId: String) {
+        val realId = idMapping[taskId] ?: taskId
+        // Remove locally first
+        fullTaskPool.removeAll { it.id == realId || it.id == taskId }
+        loadCurrentTasks()
+        updateNextTask()
+        updateCompletedCount()
+        saveState()
+
         viewModelScope.launch {
             try {
-                val realId = idMapping[taskId] ?: taskId
+                withContext(Dispatchers.IO) {
+                    dao.softDeleteTask(realId)
+                }
                 val res = VioraNetworkModule.api.deleteTask(realId)
                 if (res.success) {
+                    withContext(Dispatchers.IO) {
+                        dao.hardDeleteTask(realId)
+                    }
                     showMessage("Task deleted")
+                    VioraAnalytics.logTaskDeleted(realId)
                     idMapping.remove(taskId)
                     idMapping.remove(realId)
                     loadState()
                 } else {
-                    showMessage(res.message, true)
+                    com.example.sync.SyncManager.triggerImmediateSync(getApplication())
                 }
             } catch(e: Exception) {
-                showMessage(com.example.util.ErrorUtil.getErrorMessage(e), true)
+                com.example.sync.SyncManager.triggerImmediateSync(getApplication())
             }
         }
     }
@@ -1111,6 +2092,26 @@ fun selectTab(tab: String) {
         }
     }
 
+    private fun fetchUrlWithRedirects(urlString: String, timeoutMs: Int = 5000): String {
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(timeoutMs.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+            .readTimeout(timeoutMs.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .build()
+        val request = okhttp3.Request.Builder()
+            .url(urlString)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("Accept", "application/json, text/plain, */*")
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw java.io.IOException("HTTP error ${response.code}: ${response.message}")
+            }
+            return response.body?.string() ?: throw java.io.IOException("Empty response body")
+        }
+    }
+
     private fun fetchLocationAndWeather() {
         var city = "Tehran"
         var lat = 35.6944
@@ -1123,83 +2124,83 @@ fun selectTab(tab: String) {
             lon = _manualLongitude.value
             android.util.Log.d("VioraTaskViewModel", "Using manual weather city: $city ($lat, $lon)")
         } else {
-            // Fetch IP location with User-Agent set to avoid blocking
-            try {
-                val url = java.net.URL("https://freeipapi.com/api/json")
-                val conn = url.openConnection() as java.net.HttpURLConnection
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                conn.connectTimeout = 4000
-                conn.readTimeout = 4000
-                val response = conn.inputStream.bufferedReader().use { it.readText() }
-                val json = org.json.JSONObject(response)
-                if (json.has("cityName") && !json.isNull("cityName")) {
-                    val foundCity = json.getString("cityName")
+            var locationResolved = false
+
+            // Try 1: ipinfo.io
+            if (!locationResolved) {
+                try {
+                    val response = fetchUrlWithRedirects("https://ipinfo.io/json")
+                    val json = org.json.JSONObject(response)
+                    val foundCity = json.optString("city", "").trim()
                     if (foundCity.isNotBlank()) {
                         city = foundCity
-                        lat = json.optDouble("latitude", 35.6944)
-                        lon = json.optDouble("longitude", 51.4215)
-                        android.util.Log.d("VioraTaskViewModel", "freeipapi city found: $city")
+                        val loc = json.optString("loc", "")
+                        val parts = loc.split(",")
+                        if (parts.size == 2) {
+                            parts[0].toDoubleOrNull()?.let { lat = it }
+                            parts[1].toDoubleOrNull()?.let { lon = it }
+                        }
+                        locationResolved = true
+                        android.util.Log.d("VioraTaskViewModel", "ipinfo city found: $city ($lat, $lon)")
                     }
+                } catch (e: Exception) {
+                    android.util.Log.d("VioraTaskViewModel", "ipinfo fallback: ${e.message ?: e.javaClass.simpleName}")
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("VioraTaskViewModel", "freeipapi failed: ${e.message}")
+            }
+
+            // Try 2: freeipapi.com (handles 307 redirects)
+            if (!locationResolved) {
                 try {
-                    val url = java.net.URL("https://ipapi.co/json/")
-                    val conn = url.openConnection() as java.net.HttpURLConnection
-                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    conn.connectTimeout = 4000
-                    conn.readTimeout = 4000
-                    val response = conn.inputStream.bufferedReader().use { it.readText() }
+                    val response = fetchUrlWithRedirects("https://freeipapi.com/api/json")
                     val json = org.json.JSONObject(response)
-                    if (json.has("city") && !json.isNull("city")) {
-                        val foundCity = json.getString("city")
-                        if (foundCity.isNotBlank()) {
-                            city = foundCity
-                            lat = json.optDouble("latitude", 35.6944)
-                            lon = json.optDouble("longitude", 51.4215)
-                            android.util.Log.d("VioraTaskViewModel", "ipapi city found: $city")
-                        }
+                    val foundCity = json.optString("cityName", "").trim()
+                    if (foundCity.isNotBlank()) {
+                        city = foundCity
+                        lat = json.optDouble("latitude", lat)
+                        lon = json.optDouble("longitude", lon)
+                        locationResolved = true
+                        android.util.Log.d("VioraTaskViewModel", "freeipapi city found: $city ($lat, $lon)")
                     }
-                } catch (e2: Exception) {
-                    android.util.Log.e("VioraTaskViewModel", "ipapi failed: ${e2.message}")
-                    try {
-                        val url = java.net.URL("https://ipinfo.io/json")
-                        val conn = url.openConnection() as java.net.HttpURLConnection
-                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                        conn.connectTimeout = 4000
-                        conn.readTimeout = 4000
-                        val response = conn.inputStream.bufferedReader().use { it.readText() }
-                        val json = org.json.JSONObject(response)
-                        if (json.has("city") && !json.isNull("city")) {
-                            val foundCity = json.getString("city")
-                            if (foundCity.isNotBlank()) {
-                                city = foundCity
-                                val loc = json.optString("loc", "35.6944,51.4215")
-                                val parts = loc.split(",")
-                                if (parts.size == 2) {
-                                    lat = parts[0].toDoubleOrNull() ?: 35.6944
-                                    lon = parts[1].toDoubleOrNull() ?: 51.4215
-                                }
-                                android.util.Log.d("VioraTaskViewModel", "ipinfo city found: $city")
-                            }
-                        }
-                    } catch (e3: Exception) {
-                        android.util.Log.e("VioraTaskViewModel", "ipinfo failed: ${e3.message}")
-                    }
+                } catch (e: Exception) {
+                    android.util.Log.d("VioraTaskViewModel", "freeipapi fallback: ${e.message ?: e.javaClass.simpleName}")
                 }
+            }
+
+            // Try 3: ipapi.co
+            if (!locationResolved) {
+                try {
+                    val response = fetchUrlWithRedirects("https://ipapi.co/json/")
+                    val json = org.json.JSONObject(response)
+                    val foundCity = json.optString("city", "").trim()
+                    if (foundCity.isNotBlank()) {
+                        city = foundCity
+                        lat = json.optDouble("latitude", lat)
+                        lon = json.optDouble("longitude", lon)
+                        locationResolved = true
+                        android.util.Log.d("VioraTaskViewModel", "ipapi city found: $city ($lat, $lon)")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.d("VioraTaskViewModel", "ipapi fallback: ${e.message ?: e.javaClass.simpleName}")
+                }
+            }
+
+            // Fallback: If network is offline or all fail, read from saved cache
+            if (!locationResolved) {
+                val weatherPrefs = getApplication<Application>().getSharedPreferences("viora_weather_prefs", Context.MODE_PRIVATE)
+                city = weatherPrefs.getString("cached_weather_location", "Tehran") ?: "Tehran"
+                lat = weatherPrefs.getFloat("weather_manual_lat", 35.6944f).toDouble()
+                lon = weatherPrefs.getFloat("weather_manual_lon", 51.4215f).toDouble()
             }
         }
 
         // 2. Fetch current weather and max daily UV index
-        var tempStr = "9°"
-        var conditionStr = "Sunny"
-        var uvIndexStr = "Low"
+        val weatherPrefs = getApplication<Application>().getSharedPreferences("viora_weather_prefs", Context.MODE_PRIVATE)
+        var tempStr = weatherPrefs.getString("cached_weather_temp", "9°") ?: "9°"
+        var conditionStr = weatherPrefs.getString("cached_weather_condition", "Sunny") ?: "Sunny"
+        var uvIndexStr = weatherPrefs.getString("cached_weather_uv", "Low") ?: "Low"
         try {
             val weatherUrl = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current_weather=true&daily=uv_index_max&timezone=auto"
-            val conn = java.net.URL(weatherUrl).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 4000
-            conn.readTimeout = 4000
-            val response = conn.inputStream.bufferedReader().use { it.readText() }
+            val response = fetchUrlWithRedirects(weatherUrl, timeoutMs = 6000)
             val json = org.json.JSONObject(response)
             if (json.has("current_weather")) {
                 val current = json.getJSONObject("current_weather")
@@ -1231,7 +2232,7 @@ fun selectTab(tab: String) {
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("VioraTaskViewModel", "Weather fetch failed: ${e.message}")
+            android.util.Log.d("VioraTaskViewModel", "Weather fetch fallback used: ${e.message ?: e.javaClass.simpleName}")
         }
 
         // 3. Update weather state and cache it
@@ -1275,6 +2276,18 @@ fun selectTab(tab: String) {
         // Refresh weather data immediately in the background
         viewModelScope.launch(Dispatchers.IO) {
             fetchLocationAndWeather()
+        }
+    }
+
+    fun updateSubtaskStatus(subtaskId: String, status: String, onResult: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch {
+            try {
+                val req = com.example.model.viora.UpdateSubtaskStatusDto(status = status)
+                val res = VioraNetworkModule.api.updateSubtaskStatus(subtaskId, req)
+                onResult?.invoke(res.success)
+            } catch (e: Exception) {
+                onResult?.invoke(false)
+            }
         }
     }
 }

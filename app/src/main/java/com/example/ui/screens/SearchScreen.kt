@@ -371,6 +371,7 @@ fun SearchScreen(
                     getTeamMembers = { teamId -> viewModel.getTeamMembers(teamId) },
                     getTeamMemberUsers = { teamId -> viewModel.getTeamMemberUsers(teamId) },
                     currentUsername = currentUserName,
+                    onFetchTaskDetails = { taskId -> viewModel.fetchTaskDetails(taskId) },
                     backHandlerEnabled = activeDetailTask != null,
                     modifier = Modifier.fillMaxSize()
                 )

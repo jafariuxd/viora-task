@@ -48,33 +48,48 @@ object ApiInspectorManager {
         responseBody: String?,
         durationMs: Long
     ) {
-        activeLogsMap[logId]?.let { log ->
-            log.statusCode = statusCode
-            log.statusMessage = statusMessage
-            log.responseHeaders = responseHeaders
-            log.responseBody = responseBody
-            log.durationMs = durationMs
-            log.isPending = false
+        val existing = activeLogsMap[logId]
+        val updatedLog = (existing ?: ApiLog(
+            id = logId,
+            method = "UNKNOWN",
+            url = "",
+            requestHeaders = emptyMap(),
+            requestBody = null
+        )).copy(
+            statusCode = statusCode,
+            statusMessage = statusMessage,
+            responseHeaders = responseHeaders,
+            responseBody = responseBody,
+            durationMs = durationMs,
+            isPending = false,
+            error = null
+        )
 
-            val updatedLog = log.copy()
-            _logs.value = _logs.value.map { if (it.id == logId) updatedLog else it }
-            if (_currentModalLog.value?.id == logId) {
-                _currentModalLog.value = updatedLog
-            }
+        activeLogsMap[logId] = updatedLog
+        _logs.value = _logs.value.map { if (it.id == logId) updatedLog else it }
+        if (_currentModalLog.value?.id == logId) {
+            _currentModalLog.value = updatedLog
         }
     }
 
     fun onNetworkError(logId: String, errorMessage: String, durationMs: Long) {
-        activeLogsMap[logId]?.let { log ->
-            log.error = errorMessage
-            log.durationMs = durationMs
-            log.isPending = false
+        val existing = activeLogsMap[logId]
+        val updatedLog = (existing ?: ApiLog(
+            id = logId,
+            method = "UNKNOWN",
+            url = "",
+            requestHeaders = emptyMap(),
+            requestBody = null
+        )).copy(
+            error = errorMessage,
+            durationMs = durationMs,
+            isPending = false
+        )
 
-            val updatedLog = log.copy()
-            _logs.value = _logs.value.map { if (it.id == logId) updatedLog else it }
-            if (_currentModalLog.value?.id == logId) {
-                _currentModalLog.value = updatedLog
-            }
+        activeLogsMap[logId] = updatedLog
+        _logs.value = _logs.value.map { if (it.id == logId) updatedLog else it }
+        if (_currentModalLog.value?.id == logId) {
+            _currentModalLog.value = updatedLog
         }
     }
 
@@ -89,6 +104,7 @@ object ApiInspectorManager {
     }
 
     fun clearLogs() {
+        activeLogsMap.clear()
         _logs.value = emptyList()
         _currentModalLog.value = null
         _isInspectorOpen.value = false

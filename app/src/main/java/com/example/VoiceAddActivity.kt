@@ -252,7 +252,7 @@ class VoiceAddActivity : ComponentActivity() {
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
-                        saveTask("تسک صوتی جدید", "یادداشت صوتی (پردازش محلی)", "Unplanned Tasks", "", 7, null, "") {
+                        saveTask("تسک صوتی جدید", "یادداشت صوتی (پردازش محلی)", "My Tasks", "", 7, null, "") {
                             isProcessing = false
                             isSuccess = true
                             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
@@ -263,7 +263,7 @@ class VoiceAddActivity : ComponentActivity() {
                     }
                 } else {
                     // Fallback to offline creation when Gemini API key is missing or server is unreachable
-                    saveTask("تسک صوتی جدید", "یادداشت صوتی سریع (آفلاین)", "Unplanned Tasks", "", 7, null, "") {
+                    saveTask("تسک صوتی جدید", "یادداشت صوتی سریع (آفلاین)", "My Tasks", "", 7, null, "") {
                         isProcessing = false
                         isSuccess = true
                         android.widget.Toast.makeText(this@VoiceAddActivity, "تسک صوتی ذخیره شد", android.widget.Toast.LENGTH_SHORT).show()
@@ -293,11 +293,11 @@ class VoiceAddActivity : ComponentActivity() {
         val newTask = Task(
             id = UUID.randomUUID().toString(),
             title = title,
-            client = "Viora design",
+            client = "Personal Space",
             userId = "user1",
             teamId = teamId.ifEmpty { null },
             listId = folder.lowercase().replace(" ", "_"),
-            folder = folder.ifEmpty { "Unplanned Tasks" },
+            folder = folder.ifEmpty { "My Tasks" },
             daysLeft = daysLeft,
             status = TaskStatus.TODO,
             description = desc,

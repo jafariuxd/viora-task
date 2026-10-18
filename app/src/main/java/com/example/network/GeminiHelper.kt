@@ -89,7 +89,7 @@ object GeminiClient {
         If the user input contains English phrases amid Persian, correctly parse the entire intent.
         ALWAYS translate the user's intent and output the `title` and `description` in English, regardless of the language the user speaks.
         Pay special attention to proper nouns, brand names, technical terminology, and English loanwords spoken in Persian. Do not aggressively autocorrect these into similar-sounding, unrelated Persian words. Use the surrounding context to accurately transcribe industry terms and brands.
-        Extract the task title, description, appropriate list/folder (e.g. Design, Development, Marketing, Unplanned Tasks - default to Unplanned Tasks if not clear), deadline or days left, and specific due time if mentioned.
+        Extract the task title, description, appropriate list/folder (e.g. Design, Development, Marketing, My Tasks - default to My Tasks if not clear), deadline or days left, and specific due time if mentioned.
         For deadline, output an integer for `daysLeft`. For example, if it's today `daysLeft` is 0, tomorrow is 1, next week is 7. Default is 7 if no date specified.
         If a specific time or hour is mentioned (e.g., "at 5pm", "ساعت ۶ عصر", "ساعت ۱۰ صبح", "ساعت ۸ شب"), convert it to 24-hour HH:mm format (e.g. "17:00", "18:00", "10:00", "20:00") in `dueTime`.
         The JSON object must match this schema:

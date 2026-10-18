@@ -3,21 +3,28 @@ package com.example.ui.screens.auth
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.components.AuthErrorBanner
+import com.example.ui.components.AuthPrimaryButton
 import com.example.ui.components.AuthTopBar
 import com.example.ui.components.AuthTopRightButton
 import com.example.ui.components.VioraAuthBackground
 import com.example.ui.components.VioraAuthBorder
 import com.example.ui.components.VioraAuthGrayText
 import com.example.ui.components.VioraAuthText
+import com.example.ui.theme.SFProDisplayFontFamily
 import com.example.ui.theme.VioraNeonLime
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.viewmodel.AuthViewModel
+import kotlinx.coroutines.delay
 
 @Composable
 fun DeadlineScreen(
@@ -25,23 +32,22 @@ fun DeadlineScreen(
     onBack: () -> Unit,
     onNext: () -> Unit
 ) {
-    BackHandler {
-        onBack()
-    }
+    BackHandler { onBack() }
     
     val selectedOption by viewModel.defaultDeadline.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val isLoginSuccess by viewModel.isLoginSuccess.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     LaunchedEffect(isLoginSuccess) {
         if (isLoginSuccess) {
+            com.example.util.AutofillUtil.commitAutofill(context)
+            delay(800)
             viewModel.resetSuccess()
             onNext()
         }
     }
-    
-    val options = listOf("Daily", "Weekly", "Monthly", "Custom")
 
     Column(
         modifier = Modifier
@@ -53,8 +59,15 @@ fun DeadlineScreen(
         AuthTopBar(
             onBackOrClose = onBack,
             isClose = false,
+            currentStep = 4,
+            totalSteps = 4,
             rightAction = {
-                AuthTopRightButton(text = if (isLoading) "Loading..." else "Let's Go!", onClick = { viewModel.verifyOtp() })
+                AuthTopRightButton(
+                    text = "Finish",
+                    onClick = { viewModel.verifyOtp() },
+                    isLoading = isLoading,
+                    enabled = !isLoading
+                )
             }
         )
 
@@ -62,27 +75,31 @@ fun DeadlineScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
         ) {
             Spacer(modifier = Modifier.height(16.dp))
             
             Text(
-                text = "Choose default deadline",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Normal,
-                color = VioraAuthText
+                text = "Default Deadline",
+                fontFamily = SFProDisplayFontFamily,
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                letterSpacing = (-0.8).sp
             )
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "We assign this deadline to your unscheduled tasks to ensure none are missed.",
-                fontSize = 16.sp,
-                color = VioraAuthGrayText,
-                lineHeight = 24.sp
+                text = "Set the default timeline automatically assigned to new tasks to keep your workflow in rhythm.",
+                fontFamily = SFProDisplayFontFamily,
+                fontSize = 15.sp,
+                color = Color(0xFF8E8E93),
+                lineHeight = 22.sp
             )
             
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(28.dp))
             
             val customDays by viewModel.customDays.collectAsStateWithLifecycle()
 
@@ -91,18 +108,34 @@ fun DeadlineScreen(
                 onOptionSelected = { viewModel.updateDefaultDeadline(it) },
                 customDays = customDays,
                 onCustomDaysChanged = { viewModel.updateCustomDays(it) },
-                textColor = VioraAuthText,
-                unselectedTextColor = VioraAuthGrayText,
-                borderColor = VioraAuthBorder,
+                textColor = Color.White,
+                unselectedTextColor = Color(0xFF8E8E93),
+                borderColor = Color(0xFF2C2C2E),
                 selectedBackgroundColor = VioraNeonLime,
-                selectedItemTextColor = VioraAuthText,
+                selectedItemTextColor = Color.Black,
                 modifier = Modifier.fillMaxWidth()
             )
 
             if (errorMessage != null) {
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(text = errorMessage!!, color = MaterialTheme.colorScheme.error, fontSize = 14.sp)
+                AuthErrorBanner(message = errorMessage!!)
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+        ) {
+            AuthPrimaryButton(
+                text = if (isLoading) "Setting up workspace..." else "Complete Setup & Launch",
+                onClick = { viewModel.verifyOtp() },
+                enabled = !isLoading,
+                isLoading = isLoading
+            )
         }
     }
 }
+
